@@ -1,4 +1,5 @@
 import { topicHash } from "./dedupe.ts";
+import { calculateBuildEstimate, type BuildComponent } from "./build-cost.ts";
 import type { TrendDirection } from "./velocity.ts";
 
 export type MoatClass = "network" | "trust" | "data" | "distribution" | "switching cost";
@@ -9,18 +10,21 @@ export interface ProposedIdea {
   mechanism: string;
   evidence: string;
   moatClass: string;
-  buildDays: number;
+  buildComponents: string[];
   ownerFit: string;
 }
 
 export interface AcceptedIdea extends ProposedIdea {
   moatClass: MoatClass;
   topicHash: string;
+  buildDays: number;
+  buildBreakdown: string;
 }
 
 export interface IdeaRejection {
   title: string;
   reason: string;
+  researchAttempted?: boolean;
 }
 
 export interface IdeaGateResult {
@@ -88,8 +92,9 @@ export function checkIdeas(
       rejected.push({ title: idea.title, reason: "moat class must be exactly one accepted non-code moat" });
       continue;
     }
-    if (!Number.isInteger(idea.buildDays) || idea.buildDays < 1 || idea.buildDays > 14) {
-      rejected.push({ title: idea.title, reason: "build estimate must be an integer from 1 to 14 days" });
+    const estimate = calculateBuildEstimate(idea.buildComponents);
+    if (!estimate.ok) {
+      rejected.push({ title: idea.title, reason: estimate.reason });
       continue;
     }
     const hash = ideaTopicHash(idea);
@@ -106,7 +111,14 @@ export function checkIdeas(
       continue;
     }
     seen.add(hash);
-    accepted.push({ ...idea, moatClass: moat, topicHash: hash });
+    accepted.push({
+      ...idea,
+      buildComponents: [...idea.buildComponents] as BuildComponent[],
+      moatClass: moat,
+      topicHash: hash,
+      buildDays: estimate.buildDays,
+      buildBreakdown: estimate.breakdown,
+    });
   }
   return { accepted, rejected };
 }

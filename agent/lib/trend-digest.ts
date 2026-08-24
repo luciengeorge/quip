@@ -17,7 +17,10 @@ export interface DigestIdea {
   evidence: string;
   moatClass: MoatClass;
   buildDays: number;
+  buildBreakdown: string;
   ownerFit: string;
+  acceptance: "direct" | "after-research";
+  researchSummary?: string;
 }
 
 export interface ReadSpend {
@@ -55,23 +58,32 @@ function trendLine(trend: WeeklyTrend): string {
 
 function ideaLine(idea: DigestIdea): string {
   return [
-    `- **${idea.title}**`,
+    `- **${idea.title}** (${idea.acceptance === "after-research" ? "ACCEPTED AFTER RESEARCH" : "accepted directly"})`,
     `  Evidence: ${idea.evidence}`,
-    `  Moat: ${idea.moatClass}. Build: ${idea.buildDays} days.`,
+    `  Moat: ${idea.moatClass}. Build: ${idea.buildDays.toFixed(1)} days (${idea.buildBreakdown}).`,
     `  Mechanism: ${idea.mechanism}`,
+    ...(idea.acceptance === "after-research" && idea.researchSummary
+      ? [`  Research supplied: ${idea.researchSummary}`]
+      : []),
     `  Why it suits the owner: ${idea.ownerFit}`,
   ].join("\n");
 }
 
 function asDigestIdeas(ideas: readonly DigestIdea[] | readonly AcceptedIdea[]): DigestIdea[] {
-  return ideas.map(({ title, mechanism, evidence, moatClass, buildDays, ownerFit }) => ({
-    title,
-    mechanism,
-    evidence,
-    moatClass,
-    buildDays,
-    ownerFit,
-  }));
+  return ideas.map((idea) => {
+    if ("acceptance" in idea) return idea;
+    const { title, mechanism, evidence, moatClass, buildDays, buildBreakdown, ownerFit } = idea;
+    return {
+      title,
+      mechanism,
+      evidence,
+      moatClass,
+      buildDays,
+      buildBreakdown,
+      ownerFit,
+      acceptance: "direct",
+    };
+  });
 }
 
 function dollars(value: number): string {
@@ -85,6 +97,7 @@ export function renderTrendDigest(input: TrendDigestInput): string {
   const lines = [
     "# Quip weekly trend digest",
     "Owner-fit notes are an approximation from public GitHub and past posts, not a claim to know the owner's interests.",
+    "Build estimates cover construction only; distribution is usually the bottleneck, not building.",
     input.xDataAvailable
       ? "X data was available for at least one scan this week."
       : "X data was unavailable this week, so this digest is based on free sources rather than X.",
@@ -99,7 +112,10 @@ export function renderTrendDigest(input: TrendDigestInput): string {
     "",
     "## Rejected",
     ...(input.rejections.length > 0
-      ? input.rejections.map((rejection) => `- ${rejection.title}: ${rejection.reason}.`)
+      ? input.rejections.map(
+          (rejection) =>
+            `- ${rejection.title}: ${rejection.reason}.${rejection.researchAttempted ? " Research was attempted." : ""}`,
+        )
       : ["- Nothing was rejected after proposal review."]),
     "",
     `Read spend: $${dollars(input.spend.usedUsd)} of $${dollars(input.spend.capUsd)} (${input.spend.usedReads} used + ${input.spend.reservedReads} reserved of ${input.spend.capReads} reads).`,

@@ -11,13 +11,13 @@ function idea(overrides: Partial<ProposedIdea> = {}): ProposedIdea {
       "Match maintainers seeking paid support with verified procurement leads, then charge for completed introductions.",
     evidence: "https://news.ycombinator.com/item?id=12345 860 comments, accelerating.",
     moatClass: "network",
-    buildDays: 8,
+    buildComponents: ["auth"],
     ownerFit: "It is adjacent to the owner's public developer-tool work, an approximation from GitHub and past posts.",
     ...overrides,
   };
 }
 
-test("idea gate accepts evidence, an allowed moat, a mechanism, and a quick estimate", () => {
+test("idea gate accepts evidence, an allowed moat, a mechanism, and declared build components", () => {
   const result = checkIdeas([idea()], new Set());
 
   assert.deepEqual(result.accepted.map((accepted) => accepted.title), [
@@ -65,11 +65,34 @@ test("idea gate rejects an already-digested topic using the shared topic hash", 
   assert.equal(result.rejected[0]?.reason, "topic was already digested");
 });
 
-test("idea gate rejects estimates beyond two weeks", () => {
-  const result = checkIdeas([idea({ buildDays: 15 })], new Set());
+test("idea gate rejects a component outside the fixed taxonomy", () => {
+  const result = checkIdeas([idea({ buildComponents: ["magic"] })], new Set());
 
   assert.deepEqual(result.accepted, []);
-  assert.equal(result.rejected[0]?.reason, "build estimate must be an integer from 1 to 14 days");
+  assert.equal(
+    result.rejected[0]?.reason,
+    "build component is not in the fixed taxonomy: magic",
+  );
+});
+
+test("idea gate rejects a computed estimate beyond two weeks", () => {
+  const result = checkIdeas(
+    [
+      idea({
+        buildComponents: [
+          "regulated or compliance work",
+          "mobile app",
+          "two-sided marketplace",
+          "manual ops bootstrap",
+          "data pipeline or ETL",
+        ],
+      }),
+    ],
+    new Set(),
+  );
+
+  assert.deepEqual(result.accepted, []);
+  assert.equal(result.rejected[0]?.reason, "computed build estimate exceeds the 14 day cap (16.0 days)");
 });
 
 test("idea gate rejects a trend restatement without a concrete mechanism", () => {

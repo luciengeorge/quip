@@ -7,6 +7,7 @@ import {
   isDryRun,
   isPostingEnabled,
   minimumPostingGapMs,
+  trendResearchEscalationCap,
   weeklyTarget,
   type Logger,
 } from "./config.ts";
@@ -30,6 +31,7 @@ test("posting controls default to the safe state", () => {
   assert.equal(weeklyTarget({}, logger), 10);
   assert.equal(dailyPostCap({}, logger), 2);
   assert.equal(minimumPostingGapMs({}, logger), 4 * 60 * 60 * 1_000);
+  assert.equal(trendResearchEscalationCap({}, logger), 5);
   assert.deepEqual(warnings, []);
 });
 
@@ -119,3 +121,12 @@ for (const setting of [
     });
   }
 }
+
+test("TREND_RESEARCH_ESCALATION_CAP accepts a positive integer and fails safely", () => {
+  const valid = warningLogger();
+  const invalid = warningLogger();
+
+  assert.equal(trendResearchEscalationCap({ TREND_RESEARCH_ESCALATION_CAP: "3" }, valid.logger), 3);
+  assert.equal(trendResearchEscalationCap({ TREND_RESEARCH_ESCALATION_CAP: "0" }, invalid.logger), 5);
+  assert.match(invalid.warnings[0] ?? "", /TREND_RESEARCH_ESCALATION_CAP/);
+});

@@ -7,6 +7,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 const DEFAULT_WEEKLY_TARGET = 10;
 const DEFAULT_DAILY_CAP = 2;
 const DEFAULT_MIN_GAP_HOURS = 4;
+const DEFAULT_TREND_RESEARCH_ESCALATION_CAP = 5;
 
 function warnInvalidSetting(
   name: string,
@@ -68,6 +69,19 @@ export function isDigestDeliveryEnabled(
   logger: Logger = console,
 ): boolean {
   return booleanSetting("DIGEST_DELIVERY_ENABLED", env.DIGEST_DELIVERY_ENABLED, false, logger);
+}
+
+/** Limit the independent research passes a digest can start in one scheduled cycle. */
+export function trendResearchEscalationCap(
+  env: Env = process.env,
+  logger: Logger = console,
+): number {
+  return positiveIntegerSetting(
+    "TREND_RESEARCH_ESCALATION_CAP",
+    env.TREND_RESEARCH_ESCALATION_CAP,
+    DEFAULT_TREND_RESEARCH_ESCALATION_CAP,
+    logger,
+  );
 }
 
 export function weeklyTarget(
