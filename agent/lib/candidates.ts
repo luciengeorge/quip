@@ -1,6 +1,14 @@
 import { containsLeak, type LeakGuardConfig } from "./leak-guard.ts";
 
-export type CandidateSourceName = "github" | "hn" | "rss" | "drop" | "trending";
+export type CandidateSourceName =
+  | "github"
+  | "github-trending"
+  | "hn"
+  | "rss"
+  | "drop"
+  | "exa"
+  | "x"
+  | "trending";
 
 export interface Candidate {
   source: CandidateSourceName;

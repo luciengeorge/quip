@@ -150,7 +150,7 @@ export class XSearchSource implements CandidateSource {
         };
       }
       const candidates: Candidate[] = posts.map((post) => ({
-        source: "trending",
+        source: "x",
         title: post.text,
         url: `https://x.com/i/web/status/${post.id}`,
         context: post.text,

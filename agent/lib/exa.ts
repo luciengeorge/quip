@@ -68,7 +68,7 @@ export class ExaTrendingSource implements CandidateSource {
     const candidates: Candidate[] = (Array.isArray(payload.results) ? payload.results : [])
       .map(result)
       .filter((item): item is ExaResult => item !== null)
-      .map((item) => ({ ...item, source: "trending" }));
+      .map((item) => ({ ...item, source: "exa" }));
     return sourceResult(candidates, this.leakGuard);
   }
 }

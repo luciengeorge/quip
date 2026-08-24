@@ -62,14 +62,14 @@ test("X search reserves the maximum possible reads before its paid request and s
   assert.deepEqual(meter.settlements, [{ reservationId: "reservation-1", actualReads: 2 }]);
   assert.deepEqual(result.candidates, [
     {
-      source: "trending",
+      source: "x",
       title: "A good developer-tools take",
       url: "https://x.com/i/web/status/111",
       context: "A good developer-tools take",
       timestamp: Date.parse("2026-08-20T10:00:00Z"),
     },
     {
-      source: "trending",
+      source: "x",
       title: "Another useful point",
       url: "https://x.com/i/web/status/222",
       context: "Another useful point",

@@ -72,7 +72,7 @@ export function parseFeed(xml: string): FeedEntry[] {
   });
 }
 
-function feedUrlsFromEnv(value: string | undefined): string[] {
+export function feedUrlsFromEnv(value: string | undefined): string[] {
   return (value ?? "")
     .split(/[\n,]/)
     .map((url) => url.trim())

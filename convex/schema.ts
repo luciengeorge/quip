@@ -10,6 +10,7 @@ export const candidateStatus = v.union(
 );
 
 export const xReadReservationStatus = v.union(v.literal("pending"), v.literal("settled"));
+export const trendXSourceStatus = v.union(v.literal("available"), v.literal("unavailable"));
 
 export default defineSchema({
   candidates: defineTable({
@@ -83,4 +84,23 @@ export default defineSchema({
     createdAt: v.number(),
     settledAt: v.optional(v.number()),
   }).index("by_budgetId", ["budgetId"]),
+
+  trendObservations: defineTable({
+    topicHash: v.string(),
+    day: v.string(),
+    title: v.string(),
+    url: v.string(),
+    source: v.string(),
+    count: v.number(),
+  })
+    .index("by_topicHash_and_day", ["topicHash", "day"])
+    .index("by_day", ["day"]),
+
+  trendScans: defineTable({
+    day: v.string(),
+    scannedAt: v.number(),
+    candidateCount: v.number(),
+    sources: v.array(v.string()),
+    xSourceStatus: trendXSourceStatus,
+  }).index("by_day", ["day"]),
 });
