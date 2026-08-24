@@ -10,11 +10,13 @@
     "build": "eve build",
     "dev": "eve dev",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node --test --experimental-strip-types \"agent/**/*.test.ts\""
   },
   "dependencies": {
     "@vercel/connect": "0.4.3",
     "ai": "^7.0.58",
+    "convex": "^1.45.0",
     "eve": "^0.44.3",
     "zod": "4.4.3"
   },
@@ -24,6 +26,6 @@
   },
   "engines": {
     "node": "24.x"
-  }
-
+  },
+  "packageManager": "pnpm@10.26.0"
 }
