@@ -1,5 +1,5 @@
 import { mutation, query } from "./_generated/server";
-import schema, { candidateStatus } from "./schema";
+import schema, { candidateStatus, trendXSourceStatus } from "./schema";
 import { assertSecret } from "./auth";
 import { v } from "convex/values";
 
@@ -18,6 +18,16 @@ function assertReadCount(reads: number, maximum: number): void {
   }
 }
 
+function assertDay(day: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new Error("Invalid trend day");
+}
+
+function assertTrendCount(count: number): void {
+  if (!Number.isInteger(count) || count < 1 || count > 10_000) {
+    throw new Error("Invalid trend count");
+  }
+}
+
 export const recordCandidate = mutation({
   args: {
     token: v.string(),
@@ -33,6 +43,43 @@ export const recordCandidate = mutation({
     assertSecret(args.token);
     const { token, ...rest } = args;
     return await ctx.db.insert("candidates", { ...rest, createdAt: Date.now() });
+  },
+});
+
+/** Persist only the shared topic hash for a digest idea, reusing the candidate store. */
+export const recordDigestIdea = mutation({
+  args: {
+    token: v.string(),
+    title: v.string(),
+    url: v.string(),
+    context: v.string(),
+    topicHash: v.string(),
+  },
+  returns: v.object({ recorded: v.boolean() }),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (
+      args.title.trim().length === 0 ||
+      args.url.trim().length === 0 ||
+      args.topicHash.trim().length === 0
+    ) {
+      throw new Error("Invalid digest idea");
+    }
+    const existing = await ctx.db
+      .query("candidates")
+      .withIndex("by_topicHash", (q) => q.eq("topicHash", args.topicHash))
+      .take(1);
+    if (existing.length > 0) return { recorded: false };
+    await ctx.db.insert("candidates", {
+      source: "trending",
+      url: args.url,
+      title: args.title,
+      context: args.context,
+      topicHash: args.topicHash,
+      status: "new",
+      createdAt: Date.now(),
+    });
+    return { recorded: true };
   },
 });
 
@@ -275,5 +322,148 @@ export const settleXReads = mutation({
       settledAt: now,
     });
     return null;
+  },
+});
+
+export const getXReadSpend = query({
+  args: { token: v.string() },
+  returns: v.object({
+    month: v.string(),
+    usedReads: v.number(),
+    reservedReads: v.number(),
+    capReads: v.number(),
+    usedUsd: v.number(),
+    capUsd: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    const month = currentMonth(Date.now());
+    const budget = await ctx.db
+      .query("xReadBudgets")
+      .withIndex("by_month", (q) => q.eq("month", month))
+      .unique();
+    const usedReads = budget?.usedReads ?? 0;
+    const reservedReads = budget?.reservedReads ?? 0;
+    return {
+      month,
+      usedReads,
+      reservedReads,
+      capReads: X_MONTHLY_READ_CAP,
+      usedUsd: usedReads * X_READ_PRICE_USD,
+      capUsd: X_MONTHLY_READ_BUDGET_USD,
+    };
+  },
+});
+
+export const upsertTrendObservations = mutation({
+  args: {
+    token: v.string(),
+    observations: v.array(
+      v.object({
+        topicHash: v.string(),
+        day: v.string(),
+        title: v.string(),
+        url: v.string(),
+        source: v.string(),
+        count: v.number(),
+      }),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    const seen = new Set<string>();
+    for (const observation of args.observations) {
+      assertDay(observation.day);
+      assertTrendCount(observation.count);
+      if (
+        observation.topicHash.trim().length === 0 ||
+        observation.title.trim().length === 0 ||
+        observation.url.trim().length === 0 ||
+        observation.source.trim().length === 0
+      ) {
+        throw new Error("Invalid trend observation");
+      }
+      const key = `${observation.topicHash}\n${observation.day}`;
+      if (seen.has(key)) throw new Error("Duplicate trend observation in batch");
+      seen.add(key);
+      const existing = await ctx.db
+        .query("trendObservations")
+        .withIndex("by_topicHash_and_day", (q) =>
+          q.eq("topicHash", observation.topicHash).eq("day", observation.day),
+        )
+        .unique();
+      if (existing) {
+        await ctx.db.patch(existing._id, observation);
+      } else {
+        await ctx.db.insert("trendObservations", observation);
+      }
+    }
+    return null;
+  },
+});
+
+export const recordTrendScan = mutation({
+  args: {
+    token: v.string(),
+    day: v.string(),
+    scannedAt: v.number(),
+    candidateCount: v.number(),
+    sources: v.array(v.string()),
+    xSourceStatus: trendXSourceStatus,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    assertDay(args.day);
+    if (
+      !Number.isFinite(args.scannedAt) ||
+      !Number.isInteger(args.candidateCount) ||
+      args.candidateCount < 0 ||
+      args.sources.some((source) => source.trim().length === 0)
+    ) {
+      throw new Error("Invalid trend scan");
+    }
+    const { token, ...scan } = args;
+    const existing = await ctx.db
+      .query("trendScans")
+      .withIndex("by_day", (q) => q.eq("day", scan.day))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, scan);
+    } else {
+      await ctx.db.insert("trendScans", scan);
+    }
+    return null;
+  },
+});
+
+export const trendObservationsInRange = query({
+  args: { token: v.string(), startDay: v.string(), endDay: v.string() },
+  returns: v.array(schema.doc("trendObservations")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    assertDay(args.startDay);
+    assertDay(args.endDay);
+    if (args.endDay < args.startDay) throw new Error("Invalid trend date range");
+    return await ctx.db
+      .query("trendObservations")
+      .withIndex("by_day", (q) => q.gte("day", args.startDay).lte("day", args.endDay))
+      .collect();
+  },
+});
+
+export const trendScansInRange = query({
+  args: { token: v.string(), startDay: v.string(), endDay: v.string() },
+  returns: v.array(schema.doc("trendScans")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    assertDay(args.startDay);
+    assertDay(args.endDay);
+    if (args.endDay < args.startDay) throw new Error("Invalid trend date range");
+    return await ctx.db
+      .query("trendScans")
+      .withIndex("by_day", (q) => q.gte("day", args.startDay).lte("day", args.endDay))
+      .collect();
   },
 });

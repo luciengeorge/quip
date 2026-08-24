@@ -40,7 +40,7 @@ test("Exa trending source posts a bounded query and maps normalised candidates",
   assert.equal(fetch.calls.length, 1);
   assert.deepEqual(result.candidates, [
     {
-      source: "trending",
+      source: "exa",
       title: "A developer tool release",
       url: "https://example.com/tool",
       context: "The summary\n\nFull text",

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   dailyPostCap,
+  isDigestDeliveryEnabled,
   isDryRun,
   isPostingEnabled,
   minimumPostingGapMs,
@@ -25,6 +26,7 @@ test("posting controls default to the safe state", () => {
 
   assert.equal(isDryRun({}, logger), true);
   assert.equal(isPostingEnabled({}, logger), false);
+  assert.equal(isDigestDeliveryEnabled({}, logger), false);
   assert.equal(weeklyTarget({}, logger), 10);
   assert.equal(dailyPostCap({}, logger), 2);
   assert.equal(minimumPostingGapMs({}, logger), 4 * 60 * 60 * 1_000);
@@ -33,10 +35,15 @@ test("posting controls default to the safe state", () => {
 
 test("canonical boolean settings are accepted", () => {
   const { logger, warnings } = warningLogger();
-  const env: Env = { DRY_RUN: "false", POSTING_ENABLED: "true" };
+  const env: Env = {
+    DRY_RUN: "false",
+    POSTING_ENABLED: "true",
+    DIGEST_DELIVERY_ENABLED: "true",
+  };
 
   assert.equal(isDryRun(env, logger), false);
   assert.equal(isPostingEnabled(env, logger), true);
+  assert.equal(isDigestDeliveryEnabled(env, logger), true);
   assert.deepEqual(warnings, []);
 });
 
@@ -49,6 +56,7 @@ test("malformed boolean settings fall back safely and warn", () => {
   ]) {
     const dryRun = warningLogger();
     const posting = warningLogger();
+    const digest = warningLogger();
 
     assert.equal(isDryRun({ DRY_RUN: value }, dryRun.logger), true, name);
     assert.equal(
@@ -56,8 +64,10 @@ test("malformed boolean settings fall back safely and warn", () => {
       false,
       name,
     );
+    assert.equal(isDigestDeliveryEnabled({ DIGEST_DELIVERY_ENABLED: value }, digest.logger), false, name);
     assert.match(dryRun.warnings[0] ?? "", /DRY_RUN/);
     assert.match(posting.warnings[0] ?? "", /POSTING_ENABLED/);
+    assert.match(digest.warnings[0] ?? "", /DIGEST_DELIVERY_ENABLED/);
   }
 });
 

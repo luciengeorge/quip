@@ -62,6 +62,14 @@ export function isPostingEnabled(
   return booleanSetting("POSTING_ENABLED", env.POSTING_ENABLED, false, logger);
 }
 
+/** False unless DIGEST_DELIVERY_ENABLED is explicitly set to the canonical value "true". */
+export function isDigestDeliveryEnabled(
+  env: Env = process.env,
+  logger: Logger = console,
+): boolean {
+  return booleanSetting("DIGEST_DELIVERY_ENABLED", env.DIGEST_DELIVERY_ENABLED, false, logger);
+}
+
 export function weeklyTarget(
   env: Env = process.env,
   logger: Logger = console,

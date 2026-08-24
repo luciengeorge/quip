@@ -87,6 +87,41 @@ export interface XReadReservation {
   remainingReads: number;
 }
 
+export interface XReadSpend {
+  month: string;
+  usedReads: number;
+  reservedReads: number;
+  capReads: number;
+  usedUsd: number;
+  capUsd: number;
+}
+
+export type XSourceStatus = "available" | "unavailable";
+
+export interface TrendObservationRecord {
+  topicHash: string;
+  day: string;
+  title: string;
+  url: string;
+  source: string;
+  count: number;
+}
+
+export interface TrendScanRecord {
+  day: string;
+  scannedAt: number;
+  candidateCount: number;
+  sources: string[];
+  xSourceStatus: XSourceStatus;
+}
+
+export interface DigestIdeaRecord {
+  title: string;
+  url: string;
+  context: string;
+  topicHash: string;
+}
+
 const fns = anyApi.memory;
 
 function ref(name: string): FunctionReference<"mutation"> & FunctionReference<"query"> {
@@ -115,6 +150,10 @@ export class Memory {
 
   recordCandidate(candidate: CandidateRecord): Promise<string> {
     return this.mutation("recordCandidate", candidate) as Promise<string>;
+  }
+
+  recordDigestIdea(idea: DigestIdeaRecord): Promise<{ recorded: boolean }> {
+    return this.mutation("recordDigestIdea", idea) as Promise<{ recorded: boolean }>;
   }
 
   candidateByUrl(url: string): Promise<StoredCandidate | null> {
@@ -161,6 +200,31 @@ export class Memory {
 
   async settleXReads(reservationId: string, actualReads: number): Promise<void> {
     await this.mutation("settleXReads", { reservationId, actualReads });
+  }
+
+  getXReadSpend(): Promise<XReadSpend> {
+    return this.query("getXReadSpend", {}) as Promise<XReadSpend>;
+  }
+
+  async upsertTrendObservations(observations: TrendObservationRecord[]): Promise<void> {
+    await this.mutation("upsertTrendObservations", { observations });
+  }
+
+  async recordTrendScan(scan: TrendScanRecord): Promise<void> {
+    await this.mutation("recordTrendScan", scan);
+  }
+
+  trendObservationsInRange(
+    startDay: string,
+    endDay: string,
+  ): Promise<TrendObservationRecord[]> {
+    return this.query("trendObservationsInRange", { startDay, endDay }) as Promise<
+      TrendObservationRecord[]
+    >;
+  }
+
+  trendScansInRange(startDay: string, endDay: string): Promise<TrendScanRecord[]> {
+    return this.query("trendScansInRange", { startDay, endDay }) as Promise<TrendScanRecord[]>;
   }
 }
 

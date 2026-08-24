@@ -9,8 +9,11 @@ export interface SelectionOptions {
 const SOURCE_TIER: Record<Candidate["source"], number> = {
   drop: 0,
   github: 1,
+  "github-trending": 2,
   hn: 2,
   rss: 2,
+  exa: 3,
+  x: 3,
   trending: 3,
 };
 
