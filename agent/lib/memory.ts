@@ -81,6 +81,12 @@ export interface StoredCronRun extends CronRunRecord {
   _id: string;
 }
 
+export interface XReadReservation {
+  allowed: boolean;
+  reservationId: string | null;
+  remainingReads: number;
+}
+
 const fns = anyApi.memory;
 
 function ref(name: string): FunctionReference<"mutation"> & FunctionReference<"query"> {
@@ -147,6 +153,14 @@ export class Memory {
 
   latestCronRun(schedule: string): Promise<StoredCronRun | null> {
     return this.query("latestCronRun", { schedule }) as Promise<StoredCronRun | null>;
+  }
+
+  reserveXReads(reads: number): Promise<XReadReservation> {
+    return this.mutation("reserveXReads", { reads }) as Promise<XReadReservation>;
+  }
+
+  async settleXReads(reservationId: string, actualReads: number): Promise<void> {
+    await this.mutation("settleXReads", { reservationId, actualReads });
   }
 }
 

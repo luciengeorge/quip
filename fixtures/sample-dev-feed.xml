@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example development feed</title>
+    <item>
+      <title>Release &amp; notes</title>
+      <link>https://example.com/release</link>
+      <description><![CDATA[<p>A <strong>small</strong> release.</p>]]></description>
+      <pubDate>Wed, 20 Aug 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Second post</title>
+      <guid>https://example.com/second</guid>
+      <description>Plain text</description>
+      <pubDate>Wed, 20 Aug 2026 11:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

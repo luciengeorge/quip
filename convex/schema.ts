@@ -9,6 +9,8 @@ export const candidateStatus = v.union(
   v.literal("stale"),
 );
 
+export const xReadReservationStatus = v.union(v.literal("pending"), v.literal("settled"));
+
 export default defineSchema({
   candidates: defineTable({
     source: v.string(),
@@ -65,4 +67,20 @@ export default defineSchema({
     firedAt: v.number(),
     dispatched: v.boolean(),
   }).index("by_schedule", ["schedule"]),
+
+  xReadBudgets: defineTable({
+    month: v.string(),
+    usedReads: v.number(),
+    reservedReads: v.number(),
+    updatedAt: v.number(),
+  }).index("by_month", ["month"]),
+
+  xReadReservations: defineTable({
+    budgetId: v.id("xReadBudgets"),
+    reservedReads: v.number(),
+    actualReads: v.optional(v.number()),
+    status: xReadReservationStatus,
+    createdAt: v.number(),
+    settledAt: v.optional(v.number()),
+  }).index("by_budgetId", ["budgetId"]),
 });
