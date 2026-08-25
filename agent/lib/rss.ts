@@ -1,6 +1,12 @@
 import { sourceResult, type Candidate, type CandidateSource, type SourceResult } from "./candidates.ts";
 import { leakGuardConfigFromEnv, type LeakGuardConfig } from "./leak-guard.ts";
 
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
+
+/** Maximum age accepted from RSS feeds. Adjust this one value to tune the recency window. */
+export const RSS_MAX_ENTRY_AGE_MS = 7 * MILLISECONDS_PER_DAY;
+export const RSS_MAX_ENTRIES_PER_FEED = 25;
+
 export interface FeedEntry {
   title: string;
   url: string;
@@ -12,6 +18,7 @@ interface RssSourceConfig {
   feedUrls: readonly string[];
   fetchImpl?: typeof globalThis.fetch;
   leakGuard?: LeakGuardConfig;
+  now?: () => number;
 }
 
 function decodeXml(value: string): string {
@@ -40,7 +47,7 @@ function linkValue(fragment: string): string | null {
 function entryTimestamp(fragment: string): number {
   const date = tagValue(fragment, "pubDate") ?? tagValue(fragment, "updated") ?? tagValue(fragment, "published");
   const parsed = date ? Date.parse(date) : Number.NaN;
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parsed;
 }
 
 function entries(xml: string, tag: "item" | "entry"): string[] {
@@ -79,34 +86,83 @@ export function feedUrlsFromEnv(value: string | undefined): string[] {
     .filter((url) => url.length > 0);
 }
 
+interface FilteredFeedEntries {
+  entries: FeedEntry[];
+  olderThanWindow: number;
+  withoutUsableDate: number;
+  overCap: number;
+}
+
+function filterFeedEntries(feedEntries: readonly FeedEntry[], now: number): FilteredFeedEntries {
+  let olderThanWindow = 0;
+  let withoutUsableDate = 0;
+  const recentEntries: FeedEntry[] = [];
+  for (const entry of feedEntries) {
+    if (!Number.isFinite(entry.timestamp)) {
+      withoutUsableDate += 1;
+      continue;
+    }
+    if (entry.timestamp < now - RSS_MAX_ENTRY_AGE_MS) {
+      olderThanWindow += 1;
+      continue;
+    }
+    recentEntries.push(entry);
+  }
+  recentEntries.sort((left, right) => right.timestamp - left.timestamp);
+  const entries = recentEntries.slice(0, RSS_MAX_ENTRIES_PER_FEED);
+  return {
+    entries,
+    olderThanWindow,
+    withoutUsableDate,
+    overCap: recentEntries.length - entries.length,
+  };
+}
+
 export class RssSource implements CandidateSource {
   private readonly feedUrls: readonly string[];
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly leakGuard: LeakGuardConfig;
+  private readonly now: () => number;
 
   constructor(config: RssSourceConfig) {
     this.feedUrls = config.feedUrls;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
     this.leakGuard = config.leakGuard ?? {};
+    this.now = config.now ?? Date.now;
   }
 
   async gather(): Promise<SourceResult> {
+    const now = this.now();
     const entriesByFeed = await Promise.all(
       this.feedUrls.map(async (url) => {
         const response = await this.fetchImpl(url);
         const xml = await response.text();
         if (!response.ok) throw new Error(`RSS request failed with status ${response.status}`);
-        return parseFeed(xml);
+        return filterFeedEntries(parseFeed(xml), now);
       }),
     );
-    const candidates: Candidate[] = entriesByFeed.flat().map((entry) => ({
+    const candidates: Candidate[] = entriesByFeed.flatMap((feed) => feed.entries).map((entry) => ({
       source: "rss",
       title: entry.title,
       url: entry.url,
       context: entry.context,
       timestamp: entry.timestamp,
     }));
-    return sourceResult(candidates, this.leakGuard);
+    const drops = entriesByFeed.reduce(
+      (total, feed) => ({
+        olderThanWindow: total.olderThanWindow + feed.olderThanWindow,
+        withoutUsableDate: total.withoutUsableDate + feed.withoutUsableDate,
+        overCap: total.overCap + feed.overCap,
+      }),
+      { olderThanWindow: 0, withoutUsableDate: 0, overCap: 0 },
+    );
+    const messages =
+      drops.olderThanWindow + drops.withoutUsableDate + drops.overCap === 0
+        ? []
+        : [
+            `RSS source dropped ${drops.olderThanWindow} entries older than ${RSS_MAX_ENTRY_AGE_MS / MILLISECONDS_PER_DAY} days, ${drops.withoutUsableDate} entries without a usable date, and ${drops.overCap} entries due to the per-feed cap.`,
+          ];
+    return sourceResult(candidates, this.leakGuard, messages);
   }
 }
 
