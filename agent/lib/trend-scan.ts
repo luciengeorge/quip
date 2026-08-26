@@ -20,8 +20,14 @@ export interface TrendScanRecord {
   xSourceStatus: XSourceStatus;
 }
 
+export interface TrendObservationUpsertResult {
+  skippedCount: number;
+}
+
 export interface TrendScanMemory {
-  upsertTrendObservations(observations: TrendObservation[]): Promise<void>;
+  upsertTrendObservations(
+    observations: TrendObservation[],
+  ): Promise<TrendObservationUpsertResult>;
   recordTrendScan(scan: TrendScanRecord): Promise<void>;
 }
 
@@ -47,11 +53,32 @@ function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
+export interface ObservationsForDayResult {
+  observations: TrendObservation[];
+  droppedCount: number;
+}
+
 /** Collapse one daily source pass into idempotent per-topic counts for durable velocity. */
-export function observationsForDay(candidates: readonly Candidate[], day: string): TrendObservation[] {
+export function observationsForDay(
+  candidates: readonly Candidate[],
+  day: string,
+): ObservationsForDayResult {
   const observations = new Map<string, TrendObservation>();
+  let droppedCount = 0;
   for (const candidate of candidates) {
-    const hash = topicHash(candidate);
+    const title = candidate.title.trim();
+    const url = candidate.url.trim();
+    const source = candidate.source.trim();
+    const hash = topicHash({ title, url }).trim();
+    if (
+      title.length === 0 ||
+      url.length === 0 ||
+      source.length === 0 ||
+      hash.length === 0
+    ) {
+      droppedCount += 1;
+      continue;
+    }
     const previous = observations.get(hash);
     if (previous) {
       previous.count += 1;
@@ -60,13 +87,13 @@ export function observationsForDay(candidates: readonly Candidate[], day: string
     observations.set(hash, {
       topicHash: hash,
       day,
-      title: candidate.title,
-      url: candidate.url,
-      source: candidate.source,
+      title,
+      url,
+      source,
       count: 1,
     });
   }
-  return [...observations.values()];
+  return { observations: [...observations.values()], droppedCount };
 }
 
 function xSourceStatus(configured: boolean, messages: readonly string[]): XSourceStatus {
@@ -82,14 +109,28 @@ export async function runDailyTrendScan(
   const scannedAt = now();
   const gathered = await gatherSources(options.sources);
   const messages = [...(options.initialMessages ?? []), ...gathered.messages];
-  const observations = observationsForDay(gathered.candidates, utcDay(scannedAt));
+  const day = utcDay(scannedAt);
+  const observationResult = observationsForDay(gathered.candidates, day);
+  const observations = observationResult.observations;
+  if (observationResult.droppedCount > 0) {
+    messages.push(
+      `Trend scan dropped ${observationResult.droppedCount} invalid candidates before persistence.`,
+    );
+  }
   const status = xSourceStatus(options.xSourceConfigured, messages);
-  await options.memory.upsertTrendObservations(observations);
+  try {
+    const { skippedCount } = await options.memory.upsertTrendObservations(observations);
+    if (skippedCount > 0) {
+      messages.push(`Trend observation persistence skipped ${skippedCount} invalid rows.`);
+    }
+  } catch {
+    messages.push("Trend observation persistence failed; scan record was still written.");
+  }
   await options.memory.recordTrendScan({
-    day: utcDay(scannedAt),
+    day,
     scannedAt,
     candidateCount: gathered.candidates.length,
-    sources: [...new Set(gathered.candidates.map((candidate) => candidate.source))],
+    sources: [...new Set(observations.map((observation) => observation.source))],
     xSourceStatus: status,
   });
   return {

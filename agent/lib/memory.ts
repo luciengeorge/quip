@@ -107,6 +107,10 @@ export interface TrendObservationRecord {
   count: number;
 }
 
+export interface TrendObservationUpsertResult {
+  skippedCount: number;
+}
+
 export interface TrendScanRecord {
   day: string;
   scannedAt: number;
@@ -206,8 +210,10 @@ export class Memory {
     return this.query("getXReadSpend", {}) as Promise<XReadSpend>;
   }
 
-  async upsertTrendObservations(observations: TrendObservationRecord[]): Promise<void> {
-    await this.mutation("upsertTrendObservations", { observations });
+  upsertTrendObservations(
+    observations: TrendObservationRecord[],
+  ): Promise<TrendObservationUpsertResult> {
+    return this.mutation("upsertTrendObservations", { observations }) as Promise<TrendObservationUpsertResult>;
   }
 
   async recordTrendScan(scan: TrendScanRecord): Promise<void> {
