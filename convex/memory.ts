@@ -22,10 +22,26 @@ function assertDay(day: string): void {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new Error("Invalid trend day");
 }
 
-function assertTrendCount(count: number): void {
-  if (!Number.isInteger(count) || count < 1 || count > 10_000) {
-    throw new Error("Invalid trend count");
-  }
+interface TrendObservationInput {
+  topicHash: string;
+  day: string;
+  title: string;
+  url: string;
+  source: string;
+  count: number;
+}
+
+function validTrendObservation(observation: TrendObservationInput): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/u.test(observation.day) &&
+    Number.isInteger(observation.count) &&
+    observation.count >= 1 &&
+    observation.count <= 10_000 &&
+    observation.topicHash.trim().length > 0 &&
+    observation.title.trim().length > 0 &&
+    observation.url.trim().length > 0 &&
+    observation.source.trim().length > 0
+  );
 }
 
 export const recordCandidate = mutation({
@@ -369,20 +385,15 @@ export const upsertTrendObservations = mutation({
       }),
     ),
   },
-  returns: v.null(),
+  returns: v.object({ skippedCount: v.number() }),
   handler: async (ctx, args) => {
     assertSecret(args.token);
     const seen = new Set<string>();
+    let skippedCount = 0;
     for (const observation of args.observations) {
-      assertDay(observation.day);
-      assertTrendCount(observation.count);
-      if (
-        observation.topicHash.trim().length === 0 ||
-        observation.title.trim().length === 0 ||
-        observation.url.trim().length === 0 ||
-        observation.source.trim().length === 0
-      ) {
-        throw new Error("Invalid trend observation");
+      if (!validTrendObservation(observation)) {
+        skippedCount += 1;
+        continue;
       }
       const key = `${observation.topicHash}\n${observation.day}`;
       if (seen.has(key)) throw new Error("Duplicate trend observation in batch");
@@ -399,7 +410,7 @@ export const upsertTrendObservations = mutation({
         await ctx.db.insert("trendObservations", observation);
       }
     }
-    return null;
+    return { skippedCount };
   },
 });
 

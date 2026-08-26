@@ -65,11 +65,24 @@ export class ExaTrendingSource implements CandidateSource {
     const body = await response.text();
     if (!response.ok) throw new Error(`Exa request failed with status ${response.status}`);
     const payload = JSON.parse(body) as { results?: unknown };
-    const candidates: Candidate[] = (Array.isArray(payload.results) ? payload.results : [])
-      .map(result)
-      .filter((item): item is ExaResult => item !== null)
-      .map((item) => ({ ...item, source: "exa" }));
-    return sourceResult(candidates, this.leakGuard);
+    const candidates: Candidate[] = [];
+    let droppedBlankTitleOrUrl = 0;
+    for (const value of Array.isArray(payload.results) ? payload.results : []) {
+      const item = result(value);
+      if (!item) continue;
+      const title = item.title.trim();
+      const url = item.url.trim();
+      if (title.length === 0 || url.length === 0) {
+        droppedBlankTitleOrUrl += 1;
+        continue;
+      }
+      candidates.push({ ...item, title, url, source: "exa" });
+    }
+    const messages =
+      droppedBlankTitleOrUrl === 0
+        ? []
+        : [`Exa source dropped ${droppedBlankTitleOrUrl} results with a blank title or URL.`];
+    return sourceResult(candidates, this.leakGuard, messages);
   }
 }
 

@@ -14,6 +14,9 @@ jobs:
       - run: corepack pnpm@10.26.0 install --frozen-lockfile
       - run: corepack pnpm@10.26.0 run typecheck
       - run: node --test --experimental-strip-types "agent/**/*.test.ts"
+      # Convex mutations need the convex-test harness, so they run under vitest.
+      # Without this line the mutation tests exist but never execute in CI.
+      - run: corepack pnpm@10.26.0 run test:convex
       - run: corepack pnpm@10.26.0 run build
       - run: npx tsc -p convex/tsconfig.json --noEmit
       - run: |

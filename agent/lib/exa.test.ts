@@ -49,3 +49,27 @@ test("Exa trending source posts a bounded query and maps normalised candidates",
   ]);
   assert.deepEqual(result.messages, []);
 });
+
+test("Exa trending source drops the live blank-title result and reports the drop", async () => {
+  const fetch = fakeFetch((url, init) => {
+    assert.equal(url, "https://api.exa.ai/search");
+    assert.equal(init.method, "POST");
+    return {
+      body: {
+        results: [{ title: "", url: "https://vercel.com/blog/introducing-run" }],
+      },
+    };
+  });
+  const source = new ExaTrendingSource({
+    apiKey: "test-key",
+    query: "developer tools",
+    fetchImpl: fetch.fetch,
+  });
+
+  const result = await source.gather();
+
+  assert.equal(fetch.calls.length, 1);
+  assert.deepEqual(fetch.calls.map((call) => call.url), ["https://api.exa.ai/search"]);
+  assert.deepEqual(result.candidates, []);
+  assert.deepEqual(result.messages, ["Exa source dropped 1 results with a blank title or URL."]);
+});
