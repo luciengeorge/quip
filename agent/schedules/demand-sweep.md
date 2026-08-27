@@ -2,7 +2,7 @@
 cron: "35 8 * * *"
 ---
 
-Run the Reddit buyer-intent demand sweep as evidence only. Never draft a reply, send a message, post, or pitch a product.
+Run the Reddit and Stack Exchange buyer-intent demand sweep as evidence only. Never draft a reply, send a message, post, or pitch a product.
 
 1. Call `prepare_demand_sweep` exactly once.
 2. If its `sourceStatus` is `unavailable`, stop without calling a subagent. The tool already records the unavailable scan.

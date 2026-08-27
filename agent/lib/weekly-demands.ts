@@ -35,7 +35,10 @@ export function weeklyDemandEvidence(
     grouped.set(ask.topicHash, group);
   }
   const scannedDays = scans
-    .filter((scan) => scan.redditSourceStatus === "available")
+    .filter(
+      (scan) =>
+        scan.redditSourceStatus === "available" || scan.stackExchangeSourceStatus === "available",
+    )
     .map((scan) => scan.day);
   const evidence: WeeklyDemandEvidence[] = [];
   for (const [topicHash, topicAsks] of grouped) {

@@ -137,8 +137,8 @@ export function renderTrendDigest(input: TrendDigestInput): string {
     "",
     "## DEMAND",
     input.demandDataAvailable
-      ? "Reddit buyer-intent demand sweep was available this week."
-      : "Reddit buyer-intent demand sweep was unavailable this week; no demand asks were used.",
+      ? "Buyer-intent demand sources were available this week."
+      : "Buyer-intent demand sources were unavailable this week; no demand asks were used.",
     ...(demandAsks.length > 0
       ? demandAsks.map((ask) => demandLine(ask, input.generatedAt))
       : ["- No qualifying buyer asks."]),

@@ -152,7 +152,10 @@ export async function weeklyTrendContext(
     demandEvidence: weeklyDemandEvidence(demandAsks, demandScans, startDay, endDay),
     spend,
     xDataAvailable: scans.some((scan) => scan.xSourceStatus === "available"),
-    demandDataAvailable: demandScans.some((scan) => scan.redditSourceStatus === "available"),
+    demandDataAvailable: demandScans.some(
+      (scan) =>
+        scan.redditSourceStatus === "available" || scan.stackExchangeSourceStatus === "available",
+    ),
   };
 }
 

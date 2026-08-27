@@ -79,7 +79,7 @@ test("digest states plainly when zero ideas qualify", () => {
   assert.match(digest, /No trends or ideas qualified this week\./);
   assert.match(digest, /No ideas passed the deterministic gate this week\./);
   assert.match(digest, /Read spend: \$0\.00 of \$25\.00/);
-  assert.match(digest, /demand sweep was unavailable this week/);
+  assert.match(digest, /Buyer-intent demand sources were unavailable this week/);
 });
 
 test("digest rounds read spend to cents instead of exposing floating-point precision", () => {

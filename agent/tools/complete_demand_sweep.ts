@@ -10,7 +10,7 @@ import { memoryFromEnv } from "../lib/memory.ts";
 
 const candidateSchema = z
   .object({
-    source: z.literal("reddit"),
+    source: z.enum(["reddit", "stackexchange"]),
     title: z.string(),
     url: z.string(),
     context: z.string(),
@@ -39,6 +39,8 @@ const preparedSchema = z
     day: z.string(),
     scannedAt: z.number(),
     sourceStatus: z.enum(["available", "unavailable"]),
+    redditSourceStatus: z.enum(["available", "unavailable"]),
+    stackExchangeSourceStatus: z.enum(["available", "unavailable"]),
     plan: planSchema,
     seal: z.string(),
     messages: z.array(z.string()),

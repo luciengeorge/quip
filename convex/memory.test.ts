@@ -97,3 +97,27 @@ test("demand asks are secret-gated, skip malformed rows, and dedupe permalinks a
   expect(rows[0]).toMatchObject(ask);
   vi.unstubAllEnvs();
 });
+
+test("demand scans are secret-gated and retain each demand source status", async () => {
+  vi.stubEnv("APP_SHARED_SECRET", token);
+  const t = convexTest(schema, modules);
+  const scan = {
+    day: "2026-08-24",
+    scannedAt: Date.parse("2026-08-24T08:35:00Z"),
+    candidateCount: 1,
+    redditSourceStatus: "unavailable" as const,
+    stackExchangeSourceStatus: "available" as const,
+  };
+
+  await expect(t.mutation(api.memory.recordDemandScan, { token: "wrong-secret", ...scan })).rejects.toThrow();
+  await t.mutation(api.memory.recordDemandScan, { token, ...scan });
+  const rows = await t.query(api.memory.demandScansInRange, {
+    token,
+    startDay: "2026-08-24",
+    endDay: "2026-08-24",
+  });
+
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject(scan);
+  vi.unstubAllEnvs();
+});

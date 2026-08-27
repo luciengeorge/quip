@@ -11,16 +11,21 @@ import {
 } from "./demand-scan.ts";
 import { leakGuardConfigFromEnv } from "./leak-guard.ts";
 import { RedditDemandSource, redditDemandSourceFromEnv } from "./reddit.ts";
+import {
+  StackExchangeDemandSource,
+  stackExchangeDemandSourceFromEnv,
+} from "./stackexchange.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-export type RedditDemandSourceStatus = "available" | "unavailable";
+export type DemandSourceStatus = "available" | "unavailable";
 
 export interface DemandScanRecord {
   day: string;
   scannedAt: number;
   candidateCount: number;
-  redditSourceStatus: RedditDemandSourceStatus;
+  redditSourceStatus: DemandSourceStatus;
+  stackExchangeSourceStatus: DemandSourceStatus;
 }
 
 export interface DemandAskUpsertResult {
@@ -38,6 +43,7 @@ export interface DemandSourceSet {
   sources: CandidateSource[];
   initialMessages: string[];
   redditSourceConfigured: boolean;
+  stackExchangeSourceConfigured: boolean;
   classificationCap: number;
 }
 
@@ -49,7 +55,9 @@ export interface DemandSourceSetOptions {
 export interface PreparedDemandSweep {
   day: string;
   scannedAt: number;
-  sourceStatus: RedditDemandSourceStatus;
+  sourceStatus: DemandSourceStatus;
+  redditSourceStatus: DemandSourceStatus;
+  stackExchangeSourceStatus: DemandSourceStatus;
   plan: DemandCandidatePlan;
   seal: string;
   messages: string[];
@@ -64,14 +72,20 @@ export interface CompletedDemandSweep {
 
 export const REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Reddit demand sweep was unavailable for this scan; trend sources remain available.";
+export const STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
+  "Stack Exchange demand sweep was unavailable for this scan; other demand sources may remain available.";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
-function demandStatus(configured: boolean, messages: readonly string[]): RedditDemandSourceStatus {
+function demandStatus(
+  configured: boolean,
+  unavailablePrefix: string,
+  messages: readonly string[],
+): DemandSourceStatus {
   if (!configured) return "unavailable";
-  return messages.some((message) => message.startsWith("Reddit demand source was unavailable"))
+  return messages.some((message) => message.startsWith(unavailablePrefix))
     ? "unavailable"
     : "available";
 }
@@ -109,26 +123,33 @@ export function verifiesDemandCandidatePlan(
   return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(seal, "hex"));
 }
 
-/** Build the Reddit-only source set without an API call. Missing credentials deliberately omit it. */
+/** Build independent Reddit and Stack Exchange sources without API calls. */
 export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSourceSet {
   const env = options.env ?? process.env;
   const classificationCap = demandClassificationCap(env);
+  const sources: CandidateSource[] = [];
+  const initialMessages: string[] = [];
+  let redditSourceConfigured = false;
+  let stackExchangeSourceConfigured = false;
   try {
-    const source = redditDemandSourceFromEnv(env, options.fetchImpl);
-    return {
-      sources: [source],
-      initialMessages: [],
-      redditSourceConfigured: true,
-      classificationCap,
-    };
+    sources.push(redditDemandSourceFromEnv(env, options.fetchImpl));
+    redditSourceConfigured = true;
   } catch {
-    return {
-      sources: [],
-      initialMessages: [REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE],
-      redditSourceConfigured: false,
-      classificationCap,
-    };
+    initialMessages.push(REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE);
   }
+  try {
+    sources.push(stackExchangeDemandSourceFromEnv(env, options.fetchImpl));
+    stackExchangeSourceConfigured = true;
+  } catch {
+    initialMessages.push(STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE);
+  }
+  return {
+    sources,
+    initialMessages,
+    redditSourceConfigured,
+    stackExchangeSourceConfigured,
+    classificationCap,
+  };
 }
 
 /** Gather, boundary-check, cap, and seal one demand batch before the fresh classifier sees it. */
@@ -163,13 +184,27 @@ export async function prepareDemandSweep(options: {
       `Demand sweep limited classification to ${plan.cap} candidates and skipped ${plan.cappedCount} over the cap.`,
     );
   }
-  const sourceStatus = demandStatus(options.sourceSet.redditSourceConfigured, messages);
+  const redditSourceStatus = demandStatus(
+    options.sourceSet.redditSourceConfigured,
+    "Reddit demand source was unavailable",
+    messages,
+  );
+  const stackExchangeSourceStatus = demandStatus(
+    options.sourceSet.stackExchangeSourceConfigured,
+    "Stack Exchange demand source was unavailable",
+    messages,
+  );
+  const sourceStatus =
+    redditSourceStatus === "available" || stackExchangeSourceStatus === "available"
+      ? "available"
+      : "unavailable";
   try {
     await options.memory.recordDemandScan({
       day,
       scannedAt,
       candidateCount: plan.candidates.length,
-      redditSourceStatus: sourceStatus,
+      redditSourceStatus,
+      stackExchangeSourceStatus,
     });
   } catch {
     messages.push("Demand scan record could not be written; no demand evidence was stored.");
@@ -178,6 +213,8 @@ export async function prepareDemandSweep(options: {
     day,
     scannedAt,
     sourceStatus,
+    redditSourceStatus,
+    stackExchangeSourceStatus,
     plan,
     seal: sealDemandCandidatePlan(plan, options.secret),
     messages,
@@ -246,4 +283,4 @@ export async function completeDemandSweep(options: {
   }
 }
 
-export { RedditDemandSource };
+export { RedditDemandSource, StackExchangeDemandSource };

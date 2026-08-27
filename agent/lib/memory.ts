@@ -151,6 +151,7 @@ export interface DemandScanRecord {
   scannedAt: number;
   candidateCount: number;
   redditSourceStatus: "available" | "unavailable";
+  stackExchangeSourceStatus?: "available" | "unavailable";
 }
 
 const fns = anyApi.memory;

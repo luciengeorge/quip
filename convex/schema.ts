@@ -12,6 +12,10 @@ export const candidateStatus = v.union(
 export const xReadReservationStatus = v.union(v.literal("pending"), v.literal("settled"));
 export const trendXSourceStatus = v.union(v.literal("available"), v.literal("unavailable"));
 export const demandRedditSourceStatus = v.union(v.literal("available"), v.literal("unavailable"));
+export const demandStackExchangeSourceStatus = v.union(
+  v.literal("available"),
+  v.literal("unavailable"),
+);
 
 export default defineSchema({
   candidates: defineTable({
@@ -127,5 +131,6 @@ export default defineSchema({
     scannedAt: v.number(),
     candidateCount: v.number(),
     redditSourceStatus: demandRedditSourceStatus,
+    stackExchangeSourceStatus: v.optional(demandStackExchangeSourceStatus),
   }).index("by_day", ["day"]),
 });
