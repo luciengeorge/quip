@@ -12,9 +12,9 @@ function demandSweepSecret(): string {
 
 export default defineTool({
   description:
-    "Fetch and seal one bounded Reddit buyer-intent batch for the demand classifier. It never " +
-    "drafts, posts, or sends replies. If Reddit is unconfigured, it records that unavailability " +
-    "and returns no candidates.",
+    "Fetch and seal one bounded Reddit and Stack Exchange buyer-intent batch for the demand classifier. " +
+    "It never drafts, posts, or sends replies. Each unavailable source is recorded without blocking " +
+    "the other source.",
   inputSchema: z.object({}),
   async execute() {
     const memory = memoryFromEnv();

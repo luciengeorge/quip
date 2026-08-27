@@ -28,6 +28,22 @@ function candidate(index = 0, overrides: Partial<Candidate> = {}): Candidate {
   } as Candidate;
 }
 
+function stackExchangeCandidate(index = 0, overrides: Partial<Candidate> = {}): Candidate {
+  const url = `https://softwarerecs.stackexchange.com/questions/${index}/deployment-preview-tool`;
+  return {
+    source: "stackexchange",
+    title: `Can anyone recommend a deployment preview tool ${index}?`,
+    url,
+    context: `Can anyone recommend a deployment preview tool ${index}?\n<p>I need one for a small team.</p>`,
+    timestamp: now - 24 * 60 * 60 * 1_000,
+    author: `stack_buyer_${index}`,
+    replyCount: 1,
+    subreddit: "softwarerecs",
+    sourceText: `Can anyone recommend a deployment preview tool ${index}?\n<p>I need one for a small team.</p>`,
+    ...overrides,
+  } as Candidate;
+}
+
 function buyerOutput(plan: DemandCandidatePlan, index = 0): unknown {
   const item = plan.candidates[index];
   assert.ok(item);
@@ -59,8 +75,35 @@ test("demand boundary drops blank and malformed Reddit fields before classificat
   assert.equal(result.droppedCount, 3);
 });
 
+test("demand boundary drops blank and malformed Stack Exchange fields before classification", () => {
+  const result = planDemandCandidates(
+    [
+      stackExchangeCandidate(),
+      stackExchangeCandidate(1, { title: " " }),
+      { ...stackExchangeCandidate(2), author: "" } as Candidate,
+      { ...stackExchangeCandidate(3), sourceText: " " } as Candidate,
+    ],
+    day,
+    30,
+  );
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.droppedCount, 3);
+});
+
 test("a classifier quote that is not a verbatim source substring is dropped", () => {
   const plan = planDemandCandidates([candidate()], day, 30);
+  const output = buyerOutput(plan) as Record<string, unknown>;
+  output.quote = "Could someone suggest a deployment preview service?";
+
+  const result = classifyDemandCandidates(plan, [output], now);
+
+  assert.deepEqual(result.asks, []);
+  assert.equal(result.nonVerbatimQuoteCount, 1);
+});
+
+test("a Stack Exchange classifier quote must be a verbatim title and body substring", () => {
+  const plan = planDemandCandidates([stackExchangeCandidate()], day, 30);
   const output = buyerOutput(plan) as Record<string, unknown>;
   output.quote = "Could someone suggest a deployment preview service?";
 

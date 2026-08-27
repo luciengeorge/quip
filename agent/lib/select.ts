@@ -15,6 +15,7 @@ const SOURCE_TIER: Record<Candidate["source"], number> = {
   exa: 3,
   x: 3,
   reddit: 3,
+  stackexchange: 3,
   trending: 3,
 };
 

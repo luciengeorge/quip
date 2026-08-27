@@ -3,6 +3,9 @@ import { demandAskScore } from "./demand-score.ts";
 import { containsLeak, type LeakGuardConfig } from "./leak-guard.ts";
 import type { Candidate } from "./candidates.ts";
 import type { RedditDemandCandidate } from "./reddit.ts";
+import type { StackExchangeDemandCandidate } from "./stackexchange.ts";
+
+export type DemandCandidate = RedditDemandCandidate | StackExchangeDemandCandidate;
 
 export interface DemandAsk {
   topicHash: string;
@@ -14,13 +17,13 @@ export interface DemandAsk {
   replyCount: number;
   score: number;
   subreddit: string;
-  source: "reddit";
+  source: DemandCandidate["source"];
   askedFor: string;
 }
 
 export interface DemandCandidatePlan {
   day: string;
-  candidates: RedditDemandCandidate[];
+  candidates: DemandCandidate[];
   cap: number;
   droppedCount: number;
   duplicateCount: number;
@@ -81,8 +84,8 @@ function validClassificationCap(cap: number): boolean {
   return Number.isSafeInteger(cap) && cap >= 1 && cap <= 30;
 }
 
-function asRedditDemandCandidate(candidate: Candidate): RedditDemandCandidate | null {
-  const raw = candidate as Partial<RedditDemandCandidate>;
+function asDemandCandidate(candidate: Candidate): DemandCandidate | null {
+  const raw = candidate as Partial<DemandCandidate>;
   const author = nonBlankString(raw.author, 80);
   const subreddit = nonBlankString(raw.subreddit, 80);
   const replyCount = nonNegativeInteger(raw.replyCount);
@@ -90,7 +93,7 @@ function asRedditDemandCandidate(candidate: Candidate): RedditDemandCandidate | 
     ? raw.sourceText
     : null;
   if (
-    candidate.source !== "reddit" ||
+    (candidate.source !== "reddit" && candidate.source !== "stackexchange") ||
     candidate.title.trim().length === 0 ||
     candidate.url.trim().length === 0 ||
     candidate.context.trim().length === 0 ||
@@ -103,7 +106,7 @@ function asRedditDemandCandidate(candidate: Candidate): RedditDemandCandidate | 
     return null;
   }
   return {
-    source: "reddit",
+    source: candidate.source,
     title: candidate.title.trim(),
     url: candidate.url.trim(),
     context: candidate.context,
@@ -115,7 +118,7 @@ function asRedditDemandCandidate(candidate: Candidate): RedditDemandCandidate | 
   };
 }
 
-function candidateText(candidate: RedditDemandCandidate): string {
+function candidateText(candidate: DemandCandidate): string {
   return [
     candidate.title,
     candidate.url,
@@ -139,9 +142,9 @@ export function planDemandCandidates(
   let duplicateCount = 0;
   let leakyCount = 0;
   const seenPermalinks = new Set<string>();
-  const valid: RedditDemandCandidate[] = [];
+  const valid: DemandCandidate[] = [];
   for (const candidate of candidates) {
-    const demandCandidate = asRedditDemandCandidate(candidate);
+    const demandCandidate = asDemandCandidate(candidate);
     if (!demandCandidate) {
       droppedCount += 1;
       continue;
@@ -196,7 +199,7 @@ function parsedBuyerAsk(value: unknown): ClassifiedBuyerAsk | false | null {
 
 function matchesSource(
   output: ClassifiedBuyerAsk,
-  candidate: RedditDemandCandidate,
+  candidate: DemandCandidate,
 ): boolean {
   return (
     output.author === candidate.author &&
@@ -267,7 +270,7 @@ export function classifyDemandCandidates(
       replyCount: output.replyCount,
       score: demandAskScore({ askedAt: output.askedAt, replyCount: output.replyCount }, now),
       subreddit: output.subreddit,
-      source: "reddit",
+      source: candidate.source,
       askedFor: output.askedFor,
     });
   }

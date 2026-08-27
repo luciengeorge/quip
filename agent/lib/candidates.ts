@@ -9,6 +9,7 @@ export type CandidateSourceName =
   | "exa"
   | "x"
   | "reddit"
+  | "stackexchange"
   | "trending";
 
 export interface Candidate {

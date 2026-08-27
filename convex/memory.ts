@@ -1,5 +1,10 @@
 import { mutation, query } from "./_generated/server";
-import schema, { candidateStatus, demandRedditSourceStatus, trendXSourceStatus } from "./schema";
+import schema, {
+  candidateStatus,
+  demandRedditSourceStatus,
+  demandStackExchangeSourceStatus,
+  trendXSourceStatus,
+} from "./schema";
 import { assertSecret } from "./auth";
 import { v } from "convex/values";
 
@@ -570,6 +575,7 @@ export const recordDemandScan = mutation({
     scannedAt: v.number(),
     candidateCount: v.number(),
     redditSourceStatus: demandRedditSourceStatus,
+    stackExchangeSourceStatus: v.optional(demandStackExchangeSourceStatus),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
