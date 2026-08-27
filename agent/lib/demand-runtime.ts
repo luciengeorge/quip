@@ -10,6 +10,7 @@ import {
   type DemandClassificationResult,
 } from "./demand-scan.ts";
 import { leakGuardConfigFromEnv } from "./leak-guard.ts";
+import { memoryFromEnv } from "./memory.ts";
 import { RedditDemandSource, redditDemandSourceFromEnv } from "./reddit.ts";
 import {
   StackExchangeDemandSource,
@@ -74,6 +75,12 @@ export const REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Reddit demand sweep was unavailable for this scan; trend sources remain available.";
 export const STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Stack Exchange demand sweep was unavailable for this scan; other demand sources may remain available.";
+
+export function demandSweepSecretFromEnv(env: Env = process.env): string {
+  const secret = env.CONVEX_APP_SECRET?.trim();
+  if (!secret) throw new Error("CONVEX_APP_SECRET is not set");
+  return secret;
+}
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -219,6 +226,19 @@ export async function prepareDemandSweep(options: {
     seal: sealDemandCandidatePlan(plan, options.secret),
     messages,
   };
+}
+
+/** Execute one durable demand sweep using the configured source set. */
+export async function runDemandSweepFromEnv(
+  fetchImpl?: typeof globalThis.fetch,
+): Promise<PreparedDemandSweep> {
+  const env = process.env;
+  return await prepareDemandSweep({
+    sourceSet: demandSourceSet({ env, fetchImpl }),
+    memory: memoryFromEnv(),
+    secret: demandSweepSecretFromEnv(env),
+    env,
+  });
 }
 
 /** Revalidate sealed classifier results before storage. A bad seal is an empty, fail-closed result. */

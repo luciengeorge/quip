@@ -1,14 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { demandSourceSet, prepareDemandSweep } from "../lib/demand-runtime.ts";
-import { memoryFromEnv } from "../lib/memory.ts";
-
-function demandSweepSecret(): string {
-  const secret = process.env.CONVEX_APP_SECRET?.trim();
-  if (!secret) throw new Error("CONVEX_APP_SECRET is not set");
-  return secret;
-}
+import { runDemandSweepFromEnv } from "../lib/demand-runtime.ts";
 
 export default defineTool({
   description:
@@ -17,12 +10,6 @@ export default defineTool({
     "the other source.",
   inputSchema: z.object({}),
   async execute() {
-    const memory = memoryFromEnv();
-    const prepared = await prepareDemandSweep({
-      sourceSet: demandSourceSet(),
-      memory,
-      secret: demandSweepSecret(),
-    });
-    return prepared;
+    return await runDemandSweepFromEnv();
   },
 });
