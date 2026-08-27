@@ -8,6 +8,8 @@ const DEFAULT_WEEKLY_TARGET = 10;
 const DEFAULT_DAILY_CAP = 2;
 const DEFAULT_MIN_GAP_HOURS = 4;
 const DEFAULT_TREND_RESEARCH_ESCALATION_CAP = 5;
+export const DEFAULT_DEMAND_CLASSIFICATION_CAP = 30;
+export const MAX_DEMAND_CLASSIFICATION_CAP = 30;
 
 function warnInvalidSetting(
   name: string,
@@ -82,6 +84,24 @@ export function trendResearchEscalationCap(
     DEFAULT_TREND_RESEARCH_ESCALATION_CAP,
     logger,
   );
+}
+
+/** Limit one sweep to a bounded classifier batch, even when the source returns more results. */
+export function demandClassificationCap(
+  env: Env = process.env,
+  logger: Logger = console,
+): number {
+  const value = positiveIntegerSetting(
+    "DEMAND_CLASSIFICATION_CAP",
+    env.DEMAND_CLASSIFICATION_CAP,
+    DEFAULT_DEMAND_CLASSIFICATION_CAP,
+    logger,
+  );
+  if (value > MAX_DEMAND_CLASSIFICATION_CAP) {
+    warnInvalidSetting("DEMAND_CLASSIFICATION_CAP", DEFAULT_DEMAND_CLASSIFICATION_CAP, logger);
+    return DEFAULT_DEMAND_CLASSIFICATION_CAP;
+  }
+  return value;
 }
 
 export function weeklyTarget(

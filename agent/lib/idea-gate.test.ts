@@ -33,6 +33,21 @@ test("idea gate rejects an idea without parseable evidence", () => {
   assert.equal(result.rejected[0]?.reason, "evidence must include a link, number, and direction");
 });
 
+test("idea gate accepts demand evidence without loosening its existing link, number, and direction rule", () => {
+  const result = checkIdeas(
+    [
+      idea({
+        evidence:
+          "https://www.reddit.com/r/SaaS/comments/example/buyer_ask/ 12 replies from 4 distinct askers across 3 days, accelerating.",
+      }),
+    ],
+    new Set(),
+  );
+
+  assert.equal(result.accepted.length, 1);
+  assert.deepEqual(result.rejected, []);
+});
+
 test("idea gate does not mistake an evidence URL's numeric id for a measured number", () => {
   const result = checkIdeas(
     [idea({ evidence: "https://news.ycombinator.com/item?id=12345 accelerating." })],

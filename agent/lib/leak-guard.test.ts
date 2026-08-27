@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { containsLeak, leakGuardConfigFromEnv } from "./leak-guard.ts";
+import { fakeApiKey } from "./test-secrets.ts";
 
 const config = {
   privateRepoNames: ["private-repository"],
@@ -24,7 +25,7 @@ test("containsLeak finds configured employer-internal terms without hardcoded te
 
 test("containsLeak detects credential-shaped text", () => {
   for (const text of [
-    "sk-abcdefghijklmnopqrstuvwxyz1234567890",
+    fakeApiKey(),
     "-----BEGIN PRIVATE KEY-----",
     "a".repeat(40),
     "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==",

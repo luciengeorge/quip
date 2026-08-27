@@ -8,6 +8,7 @@ export type CandidateSourceName =
   | "drop"
   | "exa"
   | "x"
+  | "reddit"
   | "trending";
 
 export interface Candidate {

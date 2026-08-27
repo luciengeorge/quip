@@ -114,10 +114,13 @@ export default defineTool({
     }
     const digest = renderTrendDigest({
       trends: context.trends,
+      demandAsks: context.demandAsks,
       ideas: digestIdeas,
       rejections,
       spend: context.spend,
       xDataAvailable: context.xDataAvailable,
+      demandDataAvailable: context.demandDataAvailable,
+      generatedAt: context.generatedAt,
     });
     console.log(`[trend-digest] rendered weekly digest:\n${digest}`);
     return {

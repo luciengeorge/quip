@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   dailyPostCap,
+  demandClassificationCap,
   isDigestDeliveryEnabled,
   isDryRun,
   isPostingEnabled,
@@ -32,6 +33,7 @@ test("posting controls default to the safe state", () => {
   assert.equal(dailyPostCap({}, logger), 2);
   assert.equal(minimumPostingGapMs({}, logger), 4 * 60 * 60 * 1_000);
   assert.equal(trendResearchEscalationCap({}, logger), 5);
+  assert.equal(demandClassificationCap({}, logger), 30);
   assert.deepEqual(warnings, []);
 });
 
@@ -129,4 +131,16 @@ test("TREND_RESEARCH_ESCALATION_CAP accepts a positive integer and fails safely"
   assert.equal(trendResearchEscalationCap({ TREND_RESEARCH_ESCALATION_CAP: "3" }, valid.logger), 3);
   assert.equal(trendResearchEscalationCap({ TREND_RESEARCH_ESCALATION_CAP: "0" }, invalid.logger), 5);
   assert.match(invalid.warnings[0] ?? "", /TREND_RESEARCH_ESCALATION_CAP/);
+});
+
+test("DEMAND_CLASSIFICATION_CAP defaults to 30 and cannot exceed its hard cap", () => {
+  const valid = warningLogger();
+  const invalid = warningLogger();
+  const overCap = warningLogger();
+
+  assert.equal(demandClassificationCap({ DEMAND_CLASSIFICATION_CAP: "12" }, valid.logger), 12);
+  assert.equal(demandClassificationCap({ DEMAND_CLASSIFICATION_CAP: "0" }, invalid.logger), 30);
+  assert.equal(demandClassificationCap({ DEMAND_CLASSIFICATION_CAP: "31" }, overCap.logger), 30);
+  assert.match(invalid.warnings[0] ?? "", /DEMAND_CLASSIFICATION_CAP/);
+  assert.match(overCap.warnings[0] ?? "", /DEMAND_CLASSIFICATION_CAP/);
 });

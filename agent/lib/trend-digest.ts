@@ -1,4 +1,6 @@
 import type { AcceptedIdea, IdeaRejection, MoatClass } from "./idea-gate.ts";
+import { containsLeak } from "./leak-guard.ts";
+import type { DemandAskRecord } from "./memory.ts";
 import type { TrendDirection } from "./velocity.ts";
 
 export interface WeeklyTrend {
@@ -33,10 +35,13 @@ export interface ReadSpend {
 
 export interface TrendDigestInput {
   trends: readonly WeeklyTrend[];
+  demandAsks: readonly DemandAskRecord[];
   ideas: readonly DigestIdea[];
   rejections: readonly IdeaRejection[];
   spend: ReadSpend;
   xDataAvailable: boolean;
+  demandDataAvailable: boolean;
+  generatedAt: number;
 }
 
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
@@ -90,9 +95,34 @@ function dollars(value: number): string {
   return (Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2);
 }
 
+function demandAskText(ask: DemandAskRecord): string {
+  return [
+    ask.quote,
+    ask.permalink,
+    ask.author,
+    String(ask.askedAt),
+    String(ask.replyCount),
+    ask.subreddit,
+    ask.source,
+    ask.askedFor,
+  ].join("\n");
+}
+
+function demandAge(askedAt: number, generatedAt: number): string {
+  const hours = Math.floor(Math.max(0, generatedAt - askedAt) / (60 * 60 * 1_000));
+  return hours < 48 ? `${hours}h old` : `${Math.floor(hours / 24)}d old`;
+}
+
+function demandLine(ask: DemandAskRecord, generatedAt: number): string {
+  return `- "${ask.quote}" (${demandAge(ask.askedAt, generatedAt)}, ${ask.replyCount} replies, r/${ask.subreddit}): ${ask.permalink}`;
+}
+
 /** Render the short weekly report only from measured trends and gate-approved ideas. */
 export function renderTrendDigest(input: TrendDigestInput): string {
   const trends = input.trends.slice(0, 5);
+  const demandAsks = input.demandAsks
+    .filter((ask) => !containsLeak(demandAskText(ask)).leaked)
+    .slice(0, 5);
   const ideas = asDigestIdeas(input.ideas).slice(0, 3);
   const lines = [
     "# Quip weekly trend digest",
@@ -104,6 +134,14 @@ export function renderTrendDigest(input: TrendDigestInput): string {
     "",
     "## Trends",
     ...(trends.length > 0 ? trends.map(trendLine) : ["- No qualifying multi-day trends."]),
+    "",
+    "## DEMAND",
+    input.demandDataAvailable
+      ? "Reddit buyer-intent demand sweep was available this week."
+      : "Reddit buyer-intent demand sweep was unavailable this week; no demand asks were used.",
+    ...(demandAsks.length > 0
+      ? demandAsks.map((ask) => demandLine(ask, input.generatedAt))
+      : ["- No qualifying buyer asks."]),
     "",
     "## Ideas",
     ...(ideas.length > 0

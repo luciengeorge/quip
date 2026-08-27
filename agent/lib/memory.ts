@@ -126,6 +126,33 @@ export interface DigestIdeaRecord {
   topicHash: string;
 }
 
+export interface DemandAskRecord {
+  topicHash: string;
+  day: string;
+  quote: string;
+  permalink: string;
+  author: string;
+  askedAt: number;
+  replyCount: number;
+  score: number;
+  subreddit: string;
+  source: string;
+  askedFor: string;
+}
+
+export interface DemandAskUpsertResult {
+  insertedCount: number;
+  skippedCount: number;
+  dedupedCount: number;
+}
+
+export interface DemandScanRecord {
+  day: string;
+  scannedAt: number;
+  candidateCount: number;
+  redditSourceStatus: "available" | "unavailable";
+}
+
 const fns = anyApi.memory;
 
 function ref(name: string): FunctionReference<"mutation"> & FunctionReference<"query"> {
@@ -231,6 +258,22 @@ export class Memory {
 
   trendScansInRange(startDay: string, endDay: string): Promise<TrendScanRecord[]> {
     return this.query("trendScansInRange", { startDay, endDay }) as Promise<TrendScanRecord[]>;
+  }
+
+  upsertDemandAsks(asks: DemandAskRecord[]): Promise<DemandAskUpsertResult> {
+    return this.mutation("upsertDemandAsks", { asks }) as Promise<DemandAskUpsertResult>;
+  }
+
+  async recordDemandScan(scan: DemandScanRecord): Promise<void> {
+    await this.mutation("recordDemandScan", scan);
+  }
+
+  demandAsksInRange(startDay: string, endDay: string): Promise<DemandAskRecord[]> {
+    return this.query("demandAsksInRange", { startDay, endDay }) as Promise<DemandAskRecord[]>;
+  }
+
+  demandScansInRange(startDay: string, endDay: string): Promise<DemandScanRecord[]> {
+    return this.query("demandScansInRange", { startDay, endDay }) as Promise<DemandScanRecord[]>;
   }
 }
 
