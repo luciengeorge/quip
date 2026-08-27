@@ -14,6 +14,7 @@ const SOURCE_TIER: Record<Candidate["source"], number> = {
   rss: 2,
   exa: 3,
   x: 3,
+  reddit: 3,
   trending: 3,
 };
 

@@ -14,3 +14,5 @@ use deterministic code gates for posting safety, not prompt instructions alone.
 For a scheduled weekly trend digest, call `weekly_trend_context` before proposing anything, then
 call `build_weekly_trend_digest`. Use only its returned digest as the reply. The deterministic
 gate is authoritative: do not add an idea, change its evidence, or soften a listed rejection.
+Buyer-intent demand asks are evidence only. Never draft a reply, message a person, or pitch a
+product in response to a demand ask.

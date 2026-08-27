@@ -3,7 +3,13 @@ import { ExaTrendingSource } from "./exa.ts";
 import { GithubTrendingSource } from "./github-trending.ts";
 import { HackerNewsSource } from "./hn.ts";
 import { leakGuardConfigFromEnv } from "./leak-guard.ts";
-import { memoryFromEnv, type Memory, type XReadSpend } from "./memory.ts";
+import {
+  memoryFromEnv,
+  type DemandAskRecord,
+  type DemandScanRecord,
+  type Memory,
+  type XReadSpend,
+} from "./memory.ts";
 import { RssSource, feedUrlsFromEnv } from "./rss.ts";
 import {
   X_SOURCE_UNAVAILABLE_MESSAGE,
@@ -13,6 +19,7 @@ import {
 } from "./trend-scan.ts";
 import { type WeeklyTrend } from "./trend-digest.ts";
 import { weeklyTrends } from "./weekly-trends.ts";
+import { weeklyDemandAsks, weeklyDemandEvidence, type WeeklyDemandEvidence } from "./weekly-demands.ts";
 import { XSearchSource, type XReadBudget } from "./x.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -32,9 +39,13 @@ export interface TrendSourceSetOptions {
 export interface WeeklyTrendContext {
   startDay: string;
   endDay: string;
+  generatedAt: number;
   trends: WeeklyTrend[];
+  demandAsks: DemandAskRecord[];
+  demandEvidence: WeeklyDemandEvidence[];
   spend: XReadSpend;
   xDataAvailable: boolean;
+  demandDataAvailable: boolean;
 }
 
 function configured(value: string | undefined): string | null {
@@ -110,7 +121,11 @@ export async function runDailyTrendScanFromEnv(
 
 type WeeklyTrendMemory = Pick<
   Memory,
-  "trendObservationsInRange" | "trendScansInRange" | "getXReadSpend"
+  | "trendObservationsInRange"
+  | "trendScansInRange"
+  | "getXReadSpend"
+  | "demandAsksInRange"
+  | "demandScansInRange"
 >;
 
 /** Load one complete seven-day window for the weekly renderer. */
@@ -121,17 +136,23 @@ export async function weeklyTrendContext(
   const timestamp = now();
   const endDay = utcDay(timestamp);
   const startDay = offsetDay(timestamp, -6);
-  const [observations, scans, spend] = await Promise.all([
+  const [observations, scans, spend, demandAsks, demandScans] = await Promise.all([
     memory.trendObservationsInRange(startDay, endDay),
     memory.trendScansInRange(startDay, endDay),
     memory.getXReadSpend(),
+    memory.demandAsksInRange(startDay, endDay),
+    memory.demandScansInRange(startDay, endDay),
   ]);
   return {
     startDay,
     endDay,
+    generatedAt: timestamp,
     trends: weeklyTrends(observations, scans, startDay, endDay),
+    demandAsks: weeklyDemandAsks(demandAsks),
+    demandEvidence: weeklyDemandEvidence(demandAsks, demandScans, startDay, endDay),
     spend,
     xDataAvailable: scans.some((scan) => scan.xSourceStatus === "available"),
+    demandDataAvailable: demandScans.some((scan) => scan.redditSourceStatus === "available"),
   };
 }
 

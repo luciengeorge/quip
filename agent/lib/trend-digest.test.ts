@@ -17,6 +17,21 @@ const trend: WeeklyTrend = {
 test("digest renders qualified ideas with evidence, moat, estimate, and owner-fit caveat", () => {
   const digest = renderTrendDigest({
     trends: [trend],
+    demandAsks: [
+      {
+        topicHash: "demand-topic",
+        day: "2026-08-24",
+        quote: "Can anyone recommend a deployment preview tool?",
+        permalink: "https://www.reddit.com/r/SaaS/comments/example/buyer_ask/",
+        author: "buyer_one",
+        askedAt: Date.parse("2026-08-24T10:00:00Z"),
+        replyCount: 1,
+        score: 78.1,
+        subreddit: "SaaS",
+        source: "reddit",
+        askedFor: "deployment preview tooling for small teams",
+      },
+    ],
     ideas: [
       {
         title: "Migration leads for local-first adopters",
@@ -32,6 +47,8 @@ test("digest renders qualified ideas with evidence, moat, estimate, and owner-fi
     rejections: [{ title: "Generic AI dashboard", reason: "idea restates the trend without a concrete mechanism" }],
     spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
     xDataAvailable: false,
+    demandDataAvailable: true,
+    generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
 
   assert.match(digest, /X data was unavailable this week/);
@@ -42,29 +59,39 @@ test("digest renders qualified ideas with evidence, moat, estimate, and owner-fi
   assert.match(digest, /Build estimates cover construction only; distribution is usually the bottleneck/);
   assert.match(digest, /Generic AI dashboard: idea restates/);
   assert.match(digest, /Owner-fit notes are an approximation/);
+  assert.match(digest, /## DEMAND/);
+  assert.match(digest, /Can anyone recommend a deployment preview tool/);
+  assert.match(digest, /2h old, 1 replies/);
 });
 
 test("digest states plainly when zero ideas qualify", () => {
   const digest = renderTrendDigest({
     trends: [],
+    demandAsks: [],
     ideas: [],
     rejections: [],
     spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
     xDataAvailable: false,
+    demandDataAvailable: false,
+    generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
 
   assert.match(digest, /No trends or ideas qualified this week\./);
   assert.match(digest, /No ideas passed the deterministic gate this week\./);
   assert.match(digest, /Read spend: \$0\.00 of \$25\.00/);
+  assert.match(digest, /demand sweep was unavailable this week/);
 });
 
 test("digest rounds read spend to cents instead of exposing floating-point precision", () => {
   const digest = renderTrendDigest({
     trends: [],
+    demandAsks: [],
     ideas: [],
     rejections: [],
     spend: { usedReads: 167, reservedReads: 0, capReads: 5_000, usedUsd: 0.835, capUsd: 25 },
     xDataAvailable: false,
+    demandDataAvailable: false,
+    generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
 
   assert.match(digest, /Read spend: \$0\.84 of \$25\.00/);

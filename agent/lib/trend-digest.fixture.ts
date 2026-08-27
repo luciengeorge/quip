@@ -12,6 +12,7 @@ export const sampleTrendDigestInput: TrendDigestInput = {
       direction: "accelerating",
     },
   ],
+  demandAsks: [],
   ideas: [
     {
       title: "Migration leads for local-first adopters",
@@ -44,4 +45,6 @@ export const sampleTrendDigestInput: TrendDigestInput = {
   ],
   spend: { usedReads: 167, reservedReads: 0, capReads: 5_000, usedUsd: 0.835, capUsd: 25 },
   xDataAvailable: false,
+  demandDataAvailable: false,
+  generatedAt: Date.parse("2026-08-24T12:00:00Z"),
 };

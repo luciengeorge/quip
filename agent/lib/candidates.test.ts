@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ingestCandidates, type Candidate } from "./candidates.ts";
+import { fakeApiKey } from "./test-secrets.ts";
 
 const candidate: Candidate = {
   source: "drop",
@@ -16,7 +17,7 @@ test("ingest drops candidates containing configured private material", () => {
     [
       candidate,
       { ...candidate, title: "Notes from internal-project" },
-      { ...candidate, context: "token sk-abcdefghijklmnopqrstuvwxyz1234567890" },
+      { ...candidate, context: `token ${fakeApiKey()}` },
     ],
     { internalTerms: ["internal-project"] },
   );
