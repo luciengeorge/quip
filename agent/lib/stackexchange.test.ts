@@ -170,7 +170,7 @@ test("Stack Exchange demand source honors a backoff response by stopping the swe
   );
 });
 
-test("Stack Exchange sites default to Software Recommendations first and source setup reuses demand queries", () => {
+test("Stack Exchange sites default to Software Recommendations and source setup reuses demand queries", () => {
   assert.deepEqual(stackExchangeSitesFromEnv(undefined), [...DEFAULT_STACKEXCHANGE_SITES]);
   assert.deepEqual(stackExchangeSitesFromEnv("softwarerecs,stackoverflow\ninvalid/site"), [
     "softwarerecs",

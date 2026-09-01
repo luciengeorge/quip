@@ -21,7 +21,9 @@ function observation(overrides: Partial<{ title: string; url: string }> = {}) {
   };
 }
 
-function demandAsk(overrides: Partial<{ permalink: string; quote: string }> = {}) {
+function demandAsk(
+  overrides: Partial<{ permalink: string; quote: string; source: string; subreddit: string }> = {},
+) {
   return {
     topicHash: "demand-topic-hash",
     day: "2026-08-24",
@@ -43,14 +45,14 @@ function demandCandidatePlan() {
     day: "2026-08-24",
     candidates: [
       {
-        source: "reddit" as const,
+        source: "x" as const,
         title: "Can anyone recommend a deployment preview tool?",
-        url: "https://www.reddit.com/r/SaaS/comments/example/buyer_ask/",
+        url: "https://x.com/i/web/status/1895130251567000001",
         context: "I need one for a small team.",
         timestamp: Date.parse("2026-08-24T10:00:00Z"),
-        author: "buyer_one",
+        author: "x_buyer",
         replyCount: 1,
-        subreddit: "SaaS",
+        subreddit: "x",
         sourceText: "Can anyone recommend a deployment preview tool?\nI need one for a small team.",
       },
     ],
@@ -96,10 +98,14 @@ test("upsertTrendObservations still throws for a duplicate valid row in one batc
   vi.unstubAllEnvs();
 });
 
-test("demand asks are secret-gated, skip malformed rows, and dedupe permalinks across scans", async () => {
+test("demand asks are secret-gated, skip malformed rows, and dedupe X permalinks across two sweeps", async () => {
   vi.stubEnv("APP_SHARED_SECRET", token);
   const t = convexTest(schema, modules);
-  const ask = demandAsk();
+  const ask = demandAsk({
+    permalink: "https://x.com/i/web/status/1895130251567000001",
+    source: "x",
+    subreddit: "x",
+  });
 
   await expect(
     t.mutation(api.memory.upsertDemandAsks, { token: "wrong-secret", asks: [ask] }),
@@ -196,6 +202,7 @@ test("demand scans are secret-gated and retain each demand source status", async
     candidateCount: 1,
     redditSourceStatus: "unavailable" as const,
     stackExchangeSourceStatus: "available" as const,
+    xSourceStatus: "contributed" as const,
   };
 
   await expect(t.mutation(api.memory.recordDemandScan, { token: "wrong-secret", ...scan })).rejects.toThrow();

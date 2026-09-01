@@ -11,7 +11,7 @@ export const STACKEXCHANGE_SEARCH_RESULTS_PER_REQUEST = 25;
 export const STACKEXCHANGE_MAX_SEARCH_REQUESTS_PER_SWEEP = 20;
 /** Stop before the public quota is exhausted, leaving room for operational diagnostics. */
 export const STACKEXCHANGE_QUOTA_FLOOR = 25;
-export const DEFAULT_STACKEXCHANGE_SITES = ["softwarerecs", "stackoverflow"] as const;
+export const DEFAULT_STACKEXCHANGE_SITES = ["softwarerecs"] as const;
 /** Keep one oversized response from consuming the classifier batch. */
 export const STACKEXCHANGE_MAX_SOURCE_TEXT_LENGTH = 6_000;
 

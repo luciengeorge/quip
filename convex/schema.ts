@@ -23,6 +23,11 @@ export const demandStackExchangeSourceStatus = v.union(
   v.literal("available"),
   v.literal("unavailable"),
 );
+export const demandXSourceStatus = v.union(
+  v.literal("not-configured"),
+  v.literal("configured-empty"),
+  v.literal("contributed"),
+);
 export const demandCandidatePlanStatus = v.union(
   v.literal("pending"),
   v.literal("completed"),
@@ -30,7 +35,7 @@ export const demandCandidatePlanStatus = v.union(
 );
 
 const demandCandidate = v.object({
-  source: v.union(v.literal("reddit"), v.literal("stackexchange")),
+  source: v.union(v.literal("reddit"), v.literal("stackexchange"), v.literal("x")),
   title: v.string(),
   url: v.string(),
   context: v.string(),
@@ -166,6 +171,7 @@ export default defineSchema({
     candidateCount: v.number(),
     redditSourceStatus: demandRedditSourceStatus,
     stackExchangeSourceStatus: v.optional(demandStackExchangeSourceStatus),
+    xSourceStatus: v.optional(demandXSourceStatus),
   }).index("by_day", ["day"]),
 
   demandCandidatePlans: defineTable({

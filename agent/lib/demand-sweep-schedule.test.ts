@@ -140,6 +140,7 @@ test("demand sweep handler records a row when both sources are unavailable", asy
       candidateCount: 0,
       redditSourceStatus: "unavailable",
       stackExchangeSourceStatus: "unavailable",
+      xSourceStatus: "not-configured",
     },
   ]);
   assert.equal(harness.handoffs.length, 0);
@@ -166,6 +167,7 @@ test("demand sweep handler records a row when an available scan has zero candida
       candidateCount: 0,
       redditSourceStatus: "unavailable",
       stackExchangeSourceStatus: "available",
+      xSourceStatus: "not-configured",
     },
   ]);
   assert.equal(harness.handoffs.length, 0);
