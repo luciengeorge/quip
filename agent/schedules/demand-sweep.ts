@@ -17,21 +17,19 @@ interface DemandSweepScheduleDependencies {
 }
 
 const CLASSIFIER_OUTPUT_SCHEMA =
-  '{ "type": "object", "additionalProperties": false, "required": ["classifications"], "properties": { "classifications": { "type": "array", "maxItems": 30, "items": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["buyerAsk"], "properties": { "buyerAsk": { "const": false } } }, { "type": "object", "additionalProperties": false, "required": ["buyerAsk", "author", "askedAt", "quote", "replyCount", "permalink", "subreddit", "askedFor"], "properties": { "buyerAsk": { "const": true }, "author": { "type": "string" }, "askedAt": { "type": "integer" }, "quote": { "type": "string" }, "replyCount": { "type": "integer" }, "permalink": { "type": "string" }, "subreddit": { "type": "string" }, "askedFor": { "type": "string" } } } ] } } }';
+  '{ "type": "object", "additionalProperties": false, "required": ["classifications"], "properties": { "classifications": { "type": "array", "maxItems": 30, "items": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["buyerAsk", "permalink"], "properties": { "buyerAsk": { "const": false }, "permalink": { "type": "string" } } }, { "type": "object", "additionalProperties": false, "required": ["buyerAsk", "author", "askedAt", "quote", "replyCount", "permalink", "subreddit", "askedFor"], "properties": { "buyerAsk": { "const": true }, "author": { "type": "string" }, "askedAt": { "type": "integer" }, "quote": { "type": "string" }, "replyCount": { "type": "integer" }, "permalink": { "type": "string" }, "subreddit": { "type": "string" }, "askedFor": { "type": "string" } } } ] } } }';
 
 export function demandSweepHandoffMessage(prepared: PreparedDemandSweep): string {
+  if (!prepared.planId) throw new Error("Demand candidate plan was not stored");
   return [
     "Run the buyer-intent demand classification as evidence only. Never draft a reply, send a message, post, or pitch a product.",
-    "The prepared value below is sealed. Preserve it unchanged, classify only its candidates, and never add, remove, or edit a candidate.",
-    "Prepared sweep:",
-    "```json",
-    JSON.stringify(prepared),
-    "```",
-    "1. Call demand_ask_classifier exactly once with the sealed plan candidates in order. Supply this strict output schema: " +
+    `The sealed candidate plan is stored server-side under id ${prepared.planId}. Do not reproduce, edit, or return the plan.`,
+    "1. Call get_demand_candidate_plan exactly once with that id. It returns the bounded fetched candidates for classification only.",
+    "2. Call demand_ask_classifier exactly once with those candidates. Classify every returned candidate once, keyed by its exact permalink. Supply this strict output schema: " +
       CLASSIFIER_OUTPUT_SCHEMA +
       ". Do not call it for any candidate outside the sealed plan.",
-    "2. Call complete_demand_sweep exactly once with the unchanged prepared value and the classifier's classifications.",
-    "3. Return no public-facing text.",
+    `3. Call complete_demand_sweep exactly once with planId ${prepared.planId} and the classifier's classifications.`,
+    "4. Return no public-facing text.",
   ].join("\n");
 }
 
@@ -54,9 +52,13 @@ export async function runDemandSweepSchedule(
       logger.warn("[demand-sweep] Slack handoff skipped: SLACK_CHANNEL_ID is not set.");
       return;
     }
-    if (prepared.sourceStatus !== "available" || prepared.plan.candidates.length === 0) {
+    if (
+      prepared.sourceStatus !== "available" ||
+      prepared.plan.candidates.length === 0 ||
+      !prepared.planId
+    ) {
       logger.log(
-        `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}`,
+        `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}; stored=${Boolean(prepared.planId)}`,
       );
       return;
     }

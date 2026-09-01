@@ -22,7 +22,7 @@ test("trend source setup omits X without credentials but retains the free source
   assert.equal(sources.sources.some((source) => source instanceof XSearchSource), false);
   assert.equal(sources.sources.length, 2);
   assert.deepEqual(sources.initialMessages, [
-    "X data was unavailable for this scan; free sources remain available.",
+    "X was not configured for this scan; free sources remain available.",
   ]);
   assert.equal(fetch.calls.length, 0);
 });
@@ -99,4 +99,64 @@ test("weekly context keeps demand asks separate from trends and exposes their av
   assert.equal(context.demandAsks.length, 1);
   assert.equal(context.demandEvidence.length, 0);
   assert.equal(context.demandDataAvailable, true);
+  assert.equal(context.xSourceStatus, "not-configured");
+});
+
+test("weekly context reports X contribution instead of credential availability", async () => {
+  const now = () => Date.parse("2026-08-24T12:00:00Z");
+  const base = {
+    async trendObservationsInRange() {
+      return [];
+    },
+    async getXReadSpend() {
+      return {
+        month: "2026-08",
+        usedReads: 0,
+        reservedReads: 0,
+        capReads: 5_000,
+        usedUsd: 0,
+        capUsd: 25,
+      };
+    },
+    async demandAsksInRange() {
+      return [];
+    },
+    async demandScansInRange() {
+      return [];
+    },
+  };
+  const statuses = await Promise.all(
+    [
+      { scanStatus: "not-configured" as const, expected: "not-configured" as const },
+      { scanStatus: "configured-empty" as const, expected: "configured-empty" as const },
+      { scanStatus: "contributed" as const, expected: "contributed" as const },
+      { scanStatus: "available" as const, expected: "configured-empty" as const },
+    ].map(async ({ scanStatus, expected }) => {
+      const context = await weeklyTrendContext(
+        {
+          ...base,
+          async trendScansInRange() {
+            return [
+              {
+                day: "2026-08-24",
+                scannedAt: now(),
+                candidateCount: scanStatus === "contributed" ? 1 : 0,
+                sources: scanStatus === "contributed" ? ["x"] : ["hn"],
+                xSourceStatus: scanStatus,
+              },
+            ];
+          },
+        },
+        now,
+      );
+      return { actual: context.xSourceStatus, expected };
+    }),
+  );
+
+  assert.deepEqual(statuses, [
+    { actual: "not-configured", expected: "not-configured" },
+    { actual: "configured-empty", expected: "configured-empty" },
+    { actual: "contributed", expected: "contributed" },
+    { actual: "configured-empty", expected: "configured-empty" },
+  ]);
 });

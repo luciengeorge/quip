@@ -10,7 +10,11 @@ import {
   type DemandClassificationResult,
 } from "./demand-scan.ts";
 import { leakGuardConfigFromEnv } from "./leak-guard.ts";
-import { memoryFromEnv } from "./memory.ts";
+import {
+  memoryFromEnv,
+  type DemandCandidatePlanCompletion,
+  type DemandCandidatePlanRecord,
+} from "./memory.ts";
 import { RedditDemandSource, redditDemandSourceFromEnv } from "./reddit.ts";
 import {
   StackExchangeDemandSource,
@@ -37,7 +41,17 @@ export interface DemandAskUpsertResult {
 
 export interface DemandScanMemory {
   recordDemandScan(scan: DemandScanRecord): Promise<void>;
-  upsertDemandAsks(asks: DemandAsk[]): Promise<DemandAskUpsertResult>;
+  storeDemandCandidatePlan(input: {
+    plan: DemandCandidatePlan;
+    seal: string;
+    expiresAt: number;
+  }): Promise<string>;
+  loadDemandCandidatePlan(planId: string): Promise<DemandCandidatePlanRecord | null>;
+  completeDemandCandidatePlan(input: {
+    planId: string;
+    asks: DemandAsk[];
+    completedAt: number;
+  }): Promise<DemandCandidatePlanCompletion>;
 }
 
 export interface DemandSourceSet {
@@ -54,6 +68,7 @@ export interface DemandSourceSetOptions {
 }
 
 export interface PreparedDemandSweep {
+  planId: string | null;
   day: string;
   scannedAt: number;
   sourceStatus: DemandSourceStatus;
@@ -75,6 +90,7 @@ export const REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Reddit demand sweep was unavailable for this scan; trend sources remain available.";
 export const STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Stack Exchange demand sweep was unavailable for this scan; other demand sources may remain available.";
+export const DEMAND_CANDIDATE_PLAN_TTL_MS = 48 * 60 * 60 * 1_000;
 
 export function demandSweepSecretFromEnv(env: Env = process.env): string {
   const secret = env.CONVEX_APP_SECRET?.trim();
@@ -162,7 +178,7 @@ export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSou
 /** Gather, boundary-check, cap, and seal one demand batch before the fresh classifier sees it. */
 export async function prepareDemandSweep(options: {
   sourceSet: DemandSourceSet;
-  memory: Pick<DemandScanMemory, "recordDemandScan">;
+  memory: Pick<DemandScanMemory, "recordDemandScan" | "storeDemandCandidatePlan">;
   secret: string;
   now?: () => number;
   env?: Env;
@@ -216,14 +232,26 @@ export async function prepareDemandSweep(options: {
   } catch {
     messages.push("Demand scan record could not be written; no demand evidence was stored.");
   }
+  const seal = sealDemandCandidatePlan(plan, options.secret);
+  let planId: string | null = null;
+  try {
+    planId = await options.memory.storeDemandCandidatePlan({
+      plan,
+      seal,
+      expiresAt: scannedAt + DEMAND_CANDIDATE_PLAN_TTL_MS,
+    });
+  } catch {
+    messages.push("Demand candidate plan could not be stored; no classifier handoff was sent.");
+  }
   return {
+    planId,
     day,
     scannedAt,
     sourceStatus,
     redditSourceStatus,
     stackExchangeSourceStatus,
     plan,
-    seal: sealDemandCandidatePlan(plan, options.secret),
+    seal,
     messages,
   };
 }
@@ -243,29 +271,62 @@ export async function runDemandSweepFromEnv(
 
 /** Revalidate sealed classifier results before storage. A bad seal is an empty, fail-closed result. */
 export async function completeDemandSweep(options: {
-  prepared: PreparedDemandSweep;
+  planId: string;
   classifications: readonly unknown[];
-  memory: Pick<DemandScanMemory, "upsertDemandAsks">;
+  memory: Pick<DemandScanMemory, "loadDemandCandidatePlan" | "completeDemandCandidatePlan">;
   secret: string;
   now?: () => number;
   env?: Env;
 }): Promise<CompletedDemandSweep> {
-  if (!verifiesDemandCandidatePlan(options.prepared.plan, options.secret, options.prepared.seal)) {
+  let stored: DemandCandidatePlanRecord | null;
+  try {
+    stored = await options.memory.loadDemandCandidatePlan(options.planId);
+  } catch {
     return {
       asks: [],
-      classification: {
-        asks: [],
-        malformedOutputCount: 0,
-        nonBuyerCount: 0,
-        nonVerbatimQuoteCount: 0,
-        leakyCount: 0,
-      },
-      messages: ["Demand sweep results were rejected because their fetched candidate seal was invalid."],
+      classification: emptyDemandClassification(),
+      messages: ["Demand sweep results were rejected because the stored candidate plan could not be loaded."],
+      persistence: null,
+    };
+  }
+  if (!stored) {
+    return {
+      asks: [],
+      classification: emptyDemandClassification(),
+      messages: ["Demand sweep results were rejected because the stored candidate plan was not found."],
+      persistence: null,
+    };
+  }
+  if (!verifiesDemandCandidatePlan(stored.plan, options.secret, stored.seal)) {
+    return {
+      asks: [],
+      classification: emptyDemandClassification(),
+      messages: ["Demand sweep results were rejected because the stored candidate seal was invalid."],
+      persistence: null,
+    };
+  }
+  if (stored.status !== "pending") {
+    return {
+      asks: [],
+      classification: emptyDemandClassification(),
+      messages: [
+        stored.status === "expired"
+          ? "Demand sweep results were rejected because the stored candidate plan expired."
+          : "Demand sweep results were rejected because the stored candidate plan was already completed.",
+      ],
+      persistence: null,
+    };
+  }
+  if (stored.expiresAt <= (options.now ?? Date.now)()) {
+    return {
+      asks: [],
+      classification: emptyDemandClassification(),
+      messages: ["Demand sweep results were rejected because the stored candidate plan expired."],
       persistence: null,
     };
   }
   const classification = classifyDemandCandidates(
-    options.prepared.plan,
+    stored.plan,
     options.classifications,
     (options.now ?? Date.now)(),
     leakGuardConfigFromEnv(options.env),
@@ -285,7 +346,24 @@ export async function completeDemandSweep(options: {
     messages.push(`Demand sweep dropped ${classification.leakyCount} classifier outputs blocked by the leak guard.`);
   }
   try {
-    const persistence = await options.memory.upsertDemandAsks(classification.asks);
+    const persistence = await options.memory.completeDemandCandidatePlan({
+      planId: options.planId,
+      asks: classification.asks,
+      completedAt: (options.now ?? Date.now)(),
+    });
+    if (persistence.status !== "completed") {
+      return {
+        asks: [],
+        classification,
+        messages: [
+          ...messages,
+          persistence.status === "expired"
+            ? "Demand ask persistence skipped because the stored candidate plan expired."
+            : "Demand ask persistence skipped because the stored candidate plan was already used or missing.",
+        ],
+        persistence: null,
+      };
+    }
     if (persistence.skippedCount > 0) {
       messages.push(`Demand ask persistence skipped ${persistence.skippedCount} invalid rows.`);
     }
@@ -301,6 +379,16 @@ export async function completeDemandSweep(options: {
       persistence: null,
     };
   }
+}
+
+function emptyDemandClassification(): DemandClassificationResult {
+  return {
+    asks: [],
+    malformedOutputCount: 0,
+    nonBuyerCount: 0,
+    nonVerbatimQuoteCount: 0,
+    leakyCount: 0,
+  };
 }
 
 export { RedditDemandSource, StackExchangeDemandSource };

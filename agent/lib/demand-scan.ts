@@ -39,6 +39,11 @@ export interface DemandClassificationResult {
   leakyCount: number;
 }
 
+interface ClassifiedNonBuyerAsk {
+  buyerAsk: false;
+  permalink: string;
+}
+
 interface ClassifiedBuyerAsk {
   buyerAsk: true;
   author: string;
@@ -49,6 +54,8 @@ interface ClassifiedBuyerAsk {
   subreddit: string;
   askedFor: string;
 }
+
+type ClassifiedDemandCandidate = ClassifiedNonBuyerAsk | ClassifiedBuyerAsk;
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -172,13 +179,14 @@ export function planDemandCandidates(
   };
 }
 
-function parsedBuyerAsk(value: unknown): ClassifiedBuyerAsk | false | null {
+function parsedDemandCandidate(value: unknown): ClassifiedDemandCandidate | null {
   const raw = record(value);
   if (!raw || typeof raw.buyerAsk !== "boolean") return null;
-  if (raw.buyerAsk === false) return false;
+  const permalink = nonBlankString(raw.permalink, 700);
+  if (!permalink) return null;
+  if (raw.buyerAsk === false) return { buyerAsk: false, permalink };
   const author = nonBlankString(raw.author, 80);
   const quote = exactQuote(raw.quote);
-  const permalink = nonBlankString(raw.permalink, 700);
   const subreddit = nonBlankString(raw.subreddit, 80);
   const askedFor = nonBlankString(raw.askedFor, 280);
   const askedAt = finiteInteger(raw.askedAt);
@@ -227,8 +235,9 @@ function classifiedText(output: ClassifiedBuyerAsk): string {
 }
 
 /**
- * Treat classifier output as untrusted. A malformed answer, source mismatch, or paraphrased quote
- * is not buyer evidence. The caller can provide more output than needed, but only the sealed cap is read.
+ * Treat classifier output as untrusted. Every candidate must be classified exactly once by permalink,
+ * so output order cannot select a different fetched candidate. A malformed answer, source mismatch,
+ * or paraphrased quote is not buyer evidence.
  */
 export function classifyDemandCandidates(
   plan: DemandCandidatePlan,
@@ -237,18 +246,51 @@ export function classifyDemandCandidates(
   leakGuard: LeakGuardConfig = {},
 ): DemandClassificationResult {
   if (!Number.isFinite(now)) throw new Error("Invalid demand classification time");
+  if (classifications.length !== plan.candidates.length) {
+    return {
+      asks: [],
+      malformedOutputCount: Math.max(classifications.length, plan.candidates.length),
+      nonBuyerCount: 0,
+      nonVerbatimQuoteCount: 0,
+      leakyCount: 0,
+    };
+  }
+  const candidatesByPermalink = new Map(plan.candidates.map((candidate) => [candidate.url, candidate]));
+  const classificationsByPermalink = new Map<string, ClassifiedDemandCandidate>();
+  for (const value of classifications) {
+    const output = parsedDemandCandidate(value);
+    if (!output || !candidatesByPermalink.has(output.permalink) || classificationsByPermalink.has(output.permalink)) {
+      return {
+        asks: [],
+        malformedOutputCount: classifications.length,
+        nonBuyerCount: 0,
+        nonVerbatimQuoteCount: 0,
+        leakyCount: 0,
+      };
+    }
+    classificationsByPermalink.set(output.permalink, output);
+  }
   const asks: DemandAsk[] = [];
   let malformedOutputCount = 0;
   let nonBuyerCount = 0;
   let nonVerbatimQuoteCount = 0;
   let leakyCount = 0;
-  for (const [index, candidate] of plan.candidates.entries()) {
-    const output = parsedBuyerAsk(classifications[index]);
-    if (output === false) {
+  for (const candidate of plan.candidates) {
+    const output = classificationsByPermalink.get(candidate.url);
+    if (!output) {
+      return {
+        asks: [],
+        malformedOutputCount: classifications.length,
+        nonBuyerCount: 0,
+        nonVerbatimQuoteCount: 0,
+        leakyCount: 0,
+      };
+    }
+    if (output.buyerAsk === false) {
       nonBuyerCount += 1;
       continue;
     }
-    if (!output || !matchesSource(output, candidate)) {
+    if (!matchesSource(output, candidate)) {
       malformedOutputCount += 1;
       continue;
     }

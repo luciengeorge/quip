@@ -32,7 +32,7 @@ export default defineSchedule({
       ideas: [],
       rejections: [],
       spend: context.spend,
-      xDataAvailable: context.xDataAvailable,
+      xSourceStatus: context.xSourceStatus,
       demandDataAvailable: context.demandDataAvailable,
       generatedAt: context.generatedAt,
     });

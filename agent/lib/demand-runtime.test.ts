@@ -12,6 +12,7 @@ import {
   prepareDemandSweep,
   verifiesDemandCandidatePlan,
 } from "./demand-runtime.ts";
+import type { DemandAsk, DemandCandidatePlan } from "./demand-scan.ts";
 import { fakeFetch } from "./test-fetch.ts";
 import { renderTrendDigest } from "./trend-digest.ts";
 import { fakeApiKey } from "./test-secrets.ts";
@@ -36,18 +37,57 @@ function candidate(): Candidate {
 function memory() {
   const scans: unknown[] = [];
   const stored: unknown[] = [];
+  const plans = new Map<
+    string,
+    {
+      plan: DemandCandidatePlan;
+      seal: string;
+      expiresAt: number;
+      status: "pending" | "completed" | "expired";
+    }
+  >();
+  let planSequence = 0;
   return {
     client: {
       async recordDemandScan(scan: unknown) {
         scans.push(scan);
       },
-      async upsertDemandAsks(asks: unknown[]) {
-        stored.push(...asks);
-        return { insertedCount: asks.length, skippedCount: 0, dedupedCount: 0 };
+      async storeDemandCandidatePlan(input: {
+        plan: DemandCandidatePlan;
+        seal: string;
+        expiresAt: number;
+      }) {
+        const id = `plan-${++planSequence}`;
+        plans.set(id, { ...input, plan: structuredClone(input.plan), status: "pending" });
+        return id;
+      },
+      async loadDemandCandidatePlan(planId: string) {
+        const plan = plans.get(planId);
+        return plan ? { _id: planId, ...structuredClone(plan) } : null;
+      },
+      async completeDemandCandidatePlan(input: {
+        planId: string;
+        asks: DemandAsk[];
+        completedAt: number;
+      }) {
+        const plan = plans.get(input.planId);
+        if (!plan) return { status: "missing" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+        if (plan.status !== "pending") {
+          return {
+            status: plan.status === "expired" ? "expired" as const : "already-completed" as const,
+            insertedCount: 0,
+            skippedCount: 0,
+            dedupedCount: 0,
+          };
+        }
+        stored.push(...input.asks);
+        plan.status = "completed";
+        return { status: "completed" as const, insertedCount: input.asks.length, skippedCount: 0, dedupedCount: 0 };
       },
     },
     scans,
     stored,
+    plans,
   };
 }
 
@@ -89,7 +129,7 @@ test("both absent demand sources preserve the scan and record each unavailabilit
     ideas: [],
     rejections: [],
     spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
-    xDataAvailable: false,
+    xSourceStatus: "not-configured",
     demandDataAvailable: false,
     generatedAt: now,
   });
@@ -288,6 +328,32 @@ test("both available demand sources contribute to one sealed sweep", async () =>
   );
 });
 
+test("a prepared plan is stored and loaded by id without a model-owned serialization round trip", async () => {
+  const store = memory();
+  const sourceSet = {
+    sources: [
+      {
+        async gather() {
+          return { candidates: [candidate()], messages: [] };
+        },
+      },
+    ],
+    initialMessages: [],
+    redditSourceConfigured: true as const,
+    stackExchangeSourceConfigured: false as const,
+    classificationCap: 30,
+  };
+
+  const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });
+  assert.ok(prepared.planId);
+  const loaded = await store.client.loadDemandCandidatePlan(prepared.planId);
+
+  assert.ok(loaded);
+  assert.notStrictEqual(loaded.plan, prepared.plan);
+  assert.deepEqual(loaded.plan, prepared.plan);
+  assert.equal(verifiesDemandCandidatePlan(loaded.plan, secret, loaded.seal), true);
+});
+
 test("sealed candidates can be classified once and source tampering fails closed", async () => {
   const store = memory();
   const sourceSet = {
@@ -320,7 +386,7 @@ test("sealed candidates can be classified once and source tampering fails closed
     },
   ];
   const complete = await completeDemandSweep({
-    prepared,
+    planId: prepared.planId ?? "",
     classifications,
     memory: store.client,
     secret,
@@ -330,9 +396,11 @@ test("sealed candidates can be classified once and source tampering fails closed
   assert.equal(complete.asks.length, 1);
   assert.equal(store.stored.length, 1);
 
-  prepared.plan.candidates[0] = { ...item, author: "fabricated" };
+  const storedPlan = store.plans.get(prepared.planId ?? "");
+  assert.ok(storedPlan);
+  storedPlan.plan.candidates[0] = { ...item, author: "fabricated" };
   const tampered = await completeDemandSweep({
-    prepared,
+    planId: prepared.planId ?? "",
     classifications,
     memory: store.client,
     secret,
@@ -341,6 +409,58 @@ test("sealed candidates can be classified once and source tampering fails closed
   assert.deepEqual(tampered.asks, []);
   assert.deepEqual(store.stored.length, 1);
   assert.match(tampered.messages[0] ?? "", /seal was invalid/);
+});
+
+test("the same stored plan cannot persist buyer asks twice", async () => {
+  const store = memory();
+  const sourceSet = {
+    sources: [
+      {
+        async gather() {
+          return { candidates: [candidate()], messages: [] };
+        },
+      },
+    ],
+    initialMessages: [],
+    redditSourceConfigured: true as const,
+    stackExchangeSourceConfigured: false as const,
+    classificationCap: 30,
+  };
+  const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });
+  const item = prepared.plan.candidates[0];
+  assert.ok(item);
+  const classifications = [
+    {
+      buyerAsk: true,
+      author: item.author,
+      askedAt: item.timestamp,
+      quote: item.title,
+      replyCount: item.replyCount,
+      permalink: item.url,
+      subreddit: item.subreddit,
+      askedFor: "deployment preview tooling for small teams",
+    },
+  ];
+
+  const first = await completeDemandSweep({
+    planId: prepared.planId ?? "",
+    classifications,
+    memory: store.client,
+    secret,
+    now: () => now,
+  });
+  const second = await completeDemandSweep({
+    planId: prepared.planId ?? "",
+    classifications,
+    memory: store.client,
+    secret,
+    now: () => now,
+  });
+
+  assert.equal(first.asks.length, 1);
+  assert.deepEqual(second.asks, []);
+  assert.equal(store.stored.length, 1);
+  assert.match(second.messages[0] ?? "", /already completed/);
 });
 
 test("leaky classifier text never reaches demand storage", async () => {
@@ -362,7 +482,7 @@ test("leaky classifier text never reaches demand storage", async () => {
   const item = prepared.plan.candidates[0];
   assert.ok(item);
   const result = await completeDemandSweep({
-    prepared,
+    planId: prepared.planId ?? "",
     classifications: [
       {
         buyerAsk: true,

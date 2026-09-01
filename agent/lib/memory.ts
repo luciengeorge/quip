@@ -1,6 +1,8 @@
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 
+import type { DemandCandidatePlan } from "./demand-scan.ts";
+
 /** Minimal Convex client surface the memory layer needs. Injectable for tests. */
 export interface ConvexLike {
   mutation(
@@ -96,7 +98,8 @@ export interface XReadSpend {
   capUsd: number;
 }
 
-export type XSourceStatus = "available" | "unavailable";
+export type XSourceStatus = "not-configured" | "configured-empty" | "contributed";
+export type StoredXSourceStatus = XSourceStatus | "available" | "unavailable";
 
 export interface TrendObservationRecord {
   topicHash: string;
@@ -116,7 +119,7 @@ export interface TrendScanRecord {
   scannedAt: number;
   candidateCount: number;
   sources: string[];
-  xSourceStatus: XSourceStatus;
+  xSourceStatus: StoredXSourceStatus;
 }
 
 export interface DigestIdeaRecord {
@@ -141,6 +144,22 @@ export interface DemandAskRecord {
 }
 
 export interface DemandAskUpsertResult {
+  insertedCount: number;
+  skippedCount: number;
+  dedupedCount: number;
+}
+
+export interface DemandCandidatePlanRecord {
+  _id: string;
+  plan: DemandCandidatePlan;
+  seal: string;
+  status: "pending" | "completed" | "expired";
+  expiresAt: number;
+  completedAt?: number;
+}
+
+export interface DemandCandidatePlanCompletion {
+  status: "completed" | "already-completed" | "expired" | "missing";
   insertedCount: number;
   skippedCount: number;
   dedupedCount: number;
@@ -263,6 +282,26 @@ export class Memory {
 
   upsertDemandAsks(asks: DemandAskRecord[]): Promise<DemandAskUpsertResult> {
     return this.mutation("upsertDemandAsks", { asks }) as Promise<DemandAskUpsertResult>;
+  }
+
+  storeDemandCandidatePlan(input: {
+    plan: DemandCandidatePlan;
+    seal: string;
+    expiresAt: number;
+  }): Promise<string> {
+    return this.mutation("storeDemandCandidatePlan", input) as Promise<string>;
+  }
+
+  loadDemandCandidatePlan(planId: string): Promise<DemandCandidatePlanRecord | null> {
+    return this.query("loadDemandCandidatePlan", { planId }) as Promise<DemandCandidatePlanRecord | null>;
+  }
+
+  completeDemandCandidatePlan(input: {
+    planId: string;
+    asks: DemandAskRecord[];
+    completedAt: number;
+  }): Promise<DemandCandidatePlanCompletion> {
+    return this.mutation("completeDemandCandidatePlan", input) as Promise<DemandCandidatePlanCompletion>;
   }
 
   async recordDemandScan(scan: DemandScanRecord): Promise<void> {

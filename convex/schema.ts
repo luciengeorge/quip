@@ -10,12 +10,46 @@ export const candidateStatus = v.union(
 );
 
 export const xReadReservationStatus = v.union(v.literal("pending"), v.literal("settled"));
-export const trendXSourceStatus = v.union(v.literal("available"), v.literal("unavailable"));
+export const trendXSourceStatus = v.union(
+  v.literal("not-configured"),
+  v.literal("configured-empty"),
+  v.literal("contributed"),
+  // Retain legacy values until the next seven-day reporting window has passed.
+  v.literal("available"),
+  v.literal("unavailable"),
+);
 export const demandRedditSourceStatus = v.union(v.literal("available"), v.literal("unavailable"));
 export const demandStackExchangeSourceStatus = v.union(
   v.literal("available"),
   v.literal("unavailable"),
 );
+export const demandCandidatePlanStatus = v.union(
+  v.literal("pending"),
+  v.literal("completed"),
+  v.literal("expired"),
+);
+
+const demandCandidate = v.object({
+  source: v.union(v.literal("reddit"), v.literal("stackexchange")),
+  title: v.string(),
+  url: v.string(),
+  context: v.string(),
+  timestamp: v.number(),
+  author: v.string(),
+  replyCount: v.number(),
+  subreddit: v.string(),
+  sourceText: v.string(),
+});
+
+export const demandCandidatePlan = v.object({
+  day: v.string(),
+  candidates: v.array(demandCandidate),
+  cap: v.number(),
+  droppedCount: v.number(),
+  duplicateCount: v.number(),
+  leakyCount: v.number(),
+  cappedCount: v.number(),
+});
 
 export default defineSchema({
   candidates: defineTable({
@@ -133,4 +167,12 @@ export default defineSchema({
     redditSourceStatus: demandRedditSourceStatus,
     stackExchangeSourceStatus: v.optional(demandStackExchangeSourceStatus),
   }).index("by_day", ["day"]),
+
+  demandCandidatePlans: defineTable({
+    plan: demandCandidatePlan,
+    seal: v.string(),
+    status: demandCandidatePlanStatus,
+    expiresAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_expiresAt", ["expiresAt"]),
 });

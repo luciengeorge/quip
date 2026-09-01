@@ -127,13 +127,39 @@ test("the classification cap is enforced before classifier results are considere
     day,
     30,
   );
-  const outputs = Array.from({ length: 31 }, (_, index) => buyerOutput(plan, Math.min(index, 29)));
+  const outputs = Array.from({ length: 30 }, (_, index) => buyerOutput(plan, index));
   const result = classifyDemandCandidates(plan, outputs, now);
 
   assert.equal(plan.cap, 30);
   assert.equal(plan.candidates.length, 30);
   assert.equal(plan.cappedCount, 1);
   assert.equal(result.asks.length, 30);
+});
+
+test("classifications match sealed candidates by permalink when the classifier changes order", () => {
+  const plan = planDemandCandidates([candidate(0), candidate(1)], day, 30);
+  const first = buyerOutput(plan, 0) as Record<string, unknown>;
+  const second = buyerOutput(plan, 1) as Record<string, unknown>;
+  first.askedFor = "first buyer need";
+  second.askedFor = "second buyer need";
+
+  const result = classifyDemandCandidates(plan, [second, first], now);
+
+  assert.deepEqual(
+    result.asks.map((ask) => [ask.permalink, ask.askedFor]),
+    [
+      ["https://www.reddit.com/r/SaaS/comments/post_0/buyer_ask/", "first buyer need"],
+      ["https://www.reddit.com/r/SaaS/comments/post_1/buyer_ask/", "second buyer need"],
+    ],
+  );
+});
+
+test("a wrong-length classification array fails closed", () => {
+  const plan = planDemandCandidates([candidate(0), candidate(1)], day, 30);
+  const result = classifyDemandCandidates(plan, [buyerOutput(plan, 0)], now);
+
+  assert.deepEqual(result.asks, []);
+  assert.equal(result.malformedOutputCount, 2);
 });
 
 test("leaky source or classifier text never becomes a demand ask", () => {

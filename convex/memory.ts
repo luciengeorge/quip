@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import schema, {
+  demandCandidatePlan,
   candidateStatus,
   demandRedditSourceStatus,
   demandStackExchangeSourceStatus,
@@ -50,6 +51,26 @@ interface DemandAskInput {
   askedFor: string;
 }
 
+interface DemandCandidatePlanInput {
+  day: string;
+  candidates: Array<{
+    source: "reddit" | "stackexchange";
+    title: string;
+    url: string;
+    context: string;
+    timestamp: number;
+    author: string;
+    replyCount: number;
+    subreddit: string;
+    sourceText: string;
+  }>;
+  cap: number;
+  droppedCount: number;
+  duplicateCount: number;
+  leakyCount: number;
+  cappedCount: number;
+}
+
 function validTrendObservation(observation: TrendObservationInput): boolean {
   return (
     /^\d{4}-\d{2}-\d{2}$/u.test(observation.day) &&
@@ -79,6 +100,31 @@ function validDemandAsk(ask: DemandAskInput): boolean {
     ask.subreddit.trim().length > 0 &&
     ask.source.trim().length > 0 &&
     ask.askedFor.trim().length > 0
+  );
+}
+
+function validDemandCandidatePlan(plan: DemandCandidatePlanInput): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/u.test(plan.day) &&
+    Number.isInteger(plan.cap) &&
+    plan.cap >= 1 &&
+    plan.cap <= 30 &&
+    plan.candidates.length <= plan.cap &&
+    [plan.droppedCount, plan.duplicateCount, plan.leakyCount, plan.cappedCount].every(
+      (count) => Number.isInteger(count) && count >= 0,
+    ) &&
+    plan.candidates.every(
+      (candidate) =>
+        candidate.title.trim().length > 0 &&
+        candidate.url.trim().length > 0 &&
+        candidate.context.trim().length > 0 &&
+        Number.isFinite(candidate.timestamp) &&
+        candidate.author.trim().length > 0 &&
+        Number.isInteger(candidate.replyCount) &&
+        candidate.replyCount >= 0 &&
+        candidate.subreddit.trim().length > 0 &&
+        candidate.sourceText.trim().length > 0,
+    )
   );
 }
 
@@ -565,6 +611,125 @@ export const upsertDemandAsks = mutation({
       insertedCount += 1;
     }
     return { insertedCount, skippedCount, dedupedCount };
+  },
+});
+
+export const storeDemandCandidatePlan = mutation({
+  args: {
+    token: v.string(),
+    plan: demandCandidatePlan,
+    seal: v.string(),
+    expiresAt: v.number(),
+  },
+  returns: v.id("demandCandidatePlans"),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (
+      !validDemandCandidatePlan(args.plan) ||
+      !/^[a-f0-9]{64}$/u.test(args.seal) ||
+      !Number.isFinite(args.expiresAt) ||
+      args.expiresAt <= Date.now()
+    ) {
+      throw new Error("Invalid demand candidate plan");
+    }
+    const expired = await ctx.db
+      .query("demandCandidatePlans")
+      .withIndex("by_expiresAt", (q) => q.lte("expiresAt", Date.now()))
+      .take(100);
+    for (const stored of expired) await ctx.db.delete(stored._id);
+    const { token, ...plan } = args;
+    return await ctx.db.insert("demandCandidatePlans", { ...plan, status: "pending" });
+  },
+});
+
+export const loadDemandCandidatePlan = query({
+  args: { token: v.string(), planId: v.id("demandCandidatePlans") },
+  returns: v.union(v.null(), schema.doc("demandCandidatePlans")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    return await ctx.db.get(args.planId);
+  },
+});
+
+export const completeDemandCandidatePlan = mutation({
+  args: {
+    token: v.string(),
+    planId: v.id("demandCandidatePlans"),
+    asks: v.array(
+      v.object({
+        topicHash: v.string(),
+        day: v.string(),
+        quote: v.string(),
+        permalink: v.string(),
+        author: v.string(),
+        askedAt: v.number(),
+        replyCount: v.number(),
+        score: v.number(),
+        subreddit: v.string(),
+        source: v.string(),
+        askedFor: v.string(),
+      }),
+    ),
+    completedAt: v.number(),
+  },
+  returns: v.object({
+    status: v.union(
+      v.literal("completed"),
+      v.literal("already-completed"),
+      v.literal("expired"),
+      v.literal("missing"),
+    ),
+    insertedCount: v.number(),
+    skippedCount: v.number(),
+    dedupedCount: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (!Number.isFinite(args.completedAt)) throw new Error("Invalid demand completion time");
+    const stored = await ctx.db.get(args.planId);
+    if (!stored) {
+      return { status: "missing" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+    }
+    if (stored.status !== "pending") {
+      return {
+        status: stored.status === "expired" ? "expired" as const : "already-completed" as const,
+        insertedCount: 0,
+        skippedCount: 0,
+        dedupedCount: 0,
+      };
+    }
+    if (stored.expiresAt <= Date.now()) {
+      await ctx.db.patch(stored._id, { status: "expired" });
+      return { status: "expired" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+    }
+
+    let insertedCount = 0;
+    let skippedCount = 0;
+    let dedupedCount = 0;
+    const seenPermalinks = new Set<string>();
+    for (const ask of args.asks) {
+      if (!validDemandAsk(ask)) {
+        skippedCount += 1;
+        continue;
+      }
+      if (seenPermalinks.has(ask.permalink)) {
+        dedupedCount += 1;
+        continue;
+      }
+      seenPermalinks.add(ask.permalink);
+      const existing = await ctx.db
+        .query("demandAsks")
+        .withIndex("by_permalink", (q) => q.eq("permalink", ask.permalink))
+        .unique();
+      if (existing) {
+        dedupedCount += 1;
+        continue;
+      }
+      await ctx.db.insert("demandAsks", ask);
+      insertedCount += 1;
+    }
+    await ctx.db.patch(stored._id, { status: "completed", completedAt: args.completedAt });
+    return { status: "completed" as const, insertedCount, skippedCount, dedupedCount };
   },
 });
 

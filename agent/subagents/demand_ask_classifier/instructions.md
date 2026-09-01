@@ -8,7 +8,7 @@ Mark a post as a buyer ask only when its author is directly seeking a tool, prod
 
 For every buyer ask, copy `author`, `askedAt`, `replyCount`, `permalink`, and `subreddit` exactly from its supplied candidate. For Stack Exchange candidates, `subreddit` is the supplied site identifier. Set `quote` to an exact contiguous substring of that candidate's `sourceText`, preserving its words. Describe `askedFor` in one concise line.
 
-For every non-buyer ask, return only `{ "buyerAsk": false }`.
+For every non-buyer ask, return `{ "buyerAsk": false, "permalink": "exact supplied permalink" }`. The parent matches classifications by permalink, so return one classification for every supplied candidate and never reorder, omit, or invent a permalink.
 
 ## Boundary
 

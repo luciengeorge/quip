@@ -1,7 +1,7 @@
 import { gatherSources, type Candidate, type CandidateSource } from "./candidates.ts";
 import { topicHash } from "./dedupe.ts";
 
-export type XSourceStatus = "available" | "unavailable";
+export type XSourceStatus = "not-configured" | "configured-empty" | "contributed";
 
 export interface TrendObservation {
   topicHash: string;
@@ -47,7 +47,7 @@ export interface DailyTrendScanResult {
 }
 
 export const X_SOURCE_UNAVAILABLE_MESSAGE =
-  "X data was unavailable for this scan; free sources remain available.";
+  "X was not configured for this scan; free sources remain available.";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -96,9 +96,14 @@ export function observationsForDay(
   return { observations: [...observations.values()], droppedCount };
 }
 
-function xSourceStatus(configured: boolean, messages: readonly string[]): XSourceStatus {
-  if (!configured) return "unavailable";
-  return messages.some((message) => message.startsWith("X source")) ? "unavailable" : "available";
+function xSourceStatus(
+  configured: boolean,
+  observations: readonly TrendObservation[],
+): XSourceStatus {
+  if (!configured) return "not-configured";
+  return observations.some((observation) => observation.source === "x")
+    ? "contributed"
+    : "configured-empty";
 }
 
 /** Run every configured source without allowing a missing paid source to block the free scan. */
@@ -117,7 +122,7 @@ export async function runDailyTrendScan(
       `Trend scan dropped ${observationResult.droppedCount} invalid candidates before persistence.`,
     );
   }
-  const status = xSourceStatus(options.xSourceConfigured, messages);
+  const status = xSourceStatus(options.xSourceConfigured, observations);
   try {
     const { skippedCount } = await options.memory.upsertTrendObservations(observations);
     if (skippedCount > 0) {

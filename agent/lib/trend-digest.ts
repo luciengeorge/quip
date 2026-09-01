@@ -1,6 +1,7 @@
 import type { AcceptedIdea, IdeaRejection, MoatClass } from "./idea-gate.ts";
 import { containsLeak } from "./leak-guard.ts";
 import type { DemandAskRecord } from "./memory.ts";
+import type { XSourceStatus } from "./trend-scan.ts";
 import type { TrendDirection } from "./velocity.ts";
 
 export interface WeeklyTrend {
@@ -39,7 +40,7 @@ export interface TrendDigestInput {
   ideas: readonly DigestIdea[];
   rejections: readonly IdeaRejection[];
   spend: ReadSpend;
-  xDataAvailable: boolean;
+  xSourceStatus: XSourceStatus;
   demandDataAvailable: boolean;
   generatedAt: number;
 }
@@ -128,9 +129,11 @@ export function renderTrendDigest(input: TrendDigestInput): string {
     "# Quip weekly trend digest",
     "Owner-fit notes are an approximation from public GitHub and past posts, not a claim to know the owner's interests.",
     "Build estimates cover construction only; distribution is usually the bottleneck, not building.",
-    input.xDataAvailable
-      ? "X data was available for at least one scan this week."
-      : "X data was unavailable this week, so this digest is based on free sources rather than X.",
+    input.xSourceStatus === "contributed"
+      ? "X contributed candidates to at least one scan this week."
+      : input.xSourceStatus === "configured-empty"
+        ? "X was configured but contributed no candidates this week, so this digest is based on non-X sources."
+        : "X was not configured for any scan this week, so this digest is based on non-X sources.",
     "",
     "## Trends",
     ...(trends.length > 0 ? trends.map(trendLine) : ["- No qualifying multi-day trends."]),

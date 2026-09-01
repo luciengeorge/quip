@@ -46,12 +46,12 @@ test("digest renders qualified ideas with evidence, moat, estimate, and owner-fi
     ],
     rejections: [{ title: "Generic AI dashboard", reason: "idea restates the trend without a concrete mechanism" }],
     spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
-    xDataAvailable: false,
+    xSourceStatus: "not-configured",
     demandDataAvailable: true,
     generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
 
-  assert.match(digest, /X data was unavailable this week/);
+  assert.match(digest, /X was not configured for any scan this week/);
   assert.match(digest, /11 signals across 4 days, accelerating/);
   assert.match(digest, /Moat: distribution/);
   assert.match(digest, /Build: 3\.0 days \(shell \+ auth \+ payments \+ 1 integration\)/);
@@ -71,7 +71,7 @@ test("digest states plainly when zero ideas qualify", () => {
     ideas: [],
     rejections: [],
     spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
-    xDataAvailable: false,
+    xSourceStatus: "not-configured",
     demandDataAvailable: false,
     generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
@@ -89,12 +89,37 @@ test("digest rounds read spend to cents instead of exposing floating-point preci
     ideas: [],
     rejections: [],
     spend: { usedReads: 167, reservedReads: 0, capReads: 5_000, usedUsd: 0.835, capUsd: 25 },
-    xDataAvailable: false,
+    xSourceStatus: "not-configured",
     demandDataAvailable: false,
     generatedAt: Date.parse("2026-08-24T12:00:00Z"),
   });
 
   assert.match(digest, /Read spend: \$0\.84 of \$25\.00/);
+});
+
+test("digest wording distinguishes each X contribution status", () => {
+  const base = {
+    trends: [],
+    demandAsks: [],
+    ideas: [],
+    rejections: [],
+    spend: { usedReads: 0, reservedReads: 0, capReads: 5_000, usedUsd: 0, capUsd: 25 },
+    demandDataAvailable: false,
+    generatedAt: Date.parse("2026-08-24T12:00:00Z"),
+  };
+
+  assert.match(
+    renderTrendDigest({ ...base, xSourceStatus: "not-configured" }),
+    /X was not configured for any scan this week/,
+  );
+  assert.match(
+    renderTrendDigest({ ...base, xSourceStatus: "configured-empty" }),
+    /X was configured but contributed no candidates this week/,
+  );
+  assert.match(
+    renderTrendDigest({ ...base, xSourceStatus: "contributed" }),
+    /X contributed candidates to at least one scan this week/,
+  );
 });
 
 test("digest makes research rescues and unsuccessful research visible", () => {

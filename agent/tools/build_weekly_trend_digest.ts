@@ -118,7 +118,7 @@ export default defineTool({
       ideas: digestIdeas,
       rejections,
       spend: context.spend,
-      xDataAvailable: context.xDataAvailable,
+      xSourceStatus: context.xSourceStatus,
       demandDataAvailable: context.demandDataAvailable,
       generatedAt: context.generatedAt,
     });

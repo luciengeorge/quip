@@ -8,7 +8,9 @@ import {
   type DemandAskRecord,
   type DemandScanRecord,
   type Memory,
+  type StoredXSourceStatus,
   type XReadSpend,
+  type XSourceStatus,
 } from "./memory.ts";
 import { RssSource, feedUrlsFromEnv } from "./rss.ts";
 import {
@@ -44,7 +46,7 @@ export interface WeeklyTrendContext {
   demandAsks: DemandAskRecord[];
   demandEvidence: WeeklyDemandEvidence[];
   spend: XReadSpend;
-  xDataAvailable: boolean;
+  xSourceStatus: XSourceStatus;
   demandDataAvailable: boolean;
 }
 
@@ -59,6 +61,19 @@ function utcDay(timestamp: number): string {
 
 function offsetDay(timestamp: number, offset: number): string {
   return utcDay(timestamp + offset * 24 * 60 * 60 * 1_000);
+}
+
+function weeklyXSourceStatus(scans: readonly { xSourceStatus: StoredXSourceStatus }[]): XSourceStatus {
+  if (scans.some((scan) => scan.xSourceStatus === "contributed")) return "contributed";
+  if (
+    scans.some(
+      (scan) =>
+        scan.xSourceStatus === "configured-empty" || scan.xSourceStatus === "available",
+    )
+  ) {
+    return "configured-empty";
+  }
+  return "not-configured";
 }
 
 /** Build the source set without calling an API. X is present only when both credentials exist. */
@@ -151,7 +166,7 @@ export async function weeklyTrendContext(
     demandAsks: weeklyDemandAsks(demandAsks),
     demandEvidence: weeklyDemandEvidence(demandAsks, demandScans, startDay, endDay),
     spend,
-    xDataAvailable: scans.some((scan) => scan.xSourceStatus === "available"),
+    xSourceStatus: weeklyXSourceStatus(scans),
     demandDataAvailable: demandScans.some(
       (scan) =>
         scan.redditSourceStatus === "available" || scan.stackExchangeSourceStatus === "available",
