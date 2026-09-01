@@ -8,11 +8,12 @@ import {
   observationsForDay,
   runDailyTrendScan,
   type TrendScanMemory,
+  type TrendScanRecord,
 } from "./trend-scan.ts";
 
-function memory(): { client: TrendScanMemory; observations: unknown[]; scans: unknown[] } {
+function memory(): { client: TrendScanMemory; observations: unknown[]; scans: TrendScanRecord[] } {
   const observations: unknown[] = [];
-  const scans: unknown[] = [];
+  const scans: TrendScanRecord[] = [];
   return {
     client: {
       async upsertTrendObservations(items) {
@@ -87,9 +88,47 @@ test("an absent X source keeps free sources running and records its unavailabili
       scannedAt: Date.parse("2026-08-24T12:00:00Z"),
       candidateCount: 1,
       sources: ["hn"],
-      xSourceStatus: "unavailable",
+      xSourceStatus: "not-configured",
     },
   ]);
+});
+
+test("a configured X source that contributes no candidates is recorded as configured-empty", async () => {
+  const source: CandidateSource = {
+    async gather() {
+      return { candidates: [candidate({ source: "hn" })], messages: [] };
+    },
+  };
+  const store = memory();
+
+  const result = await runDailyTrendScan({
+    sources: [source],
+    memory: store.client,
+    now: () => Date.parse("2026-08-24T12:00:00Z"),
+    xSourceConfigured: true,
+  });
+
+  assert.equal(result.xSourceStatus, "configured-empty");
+  assert.equal(store.scans[0]?.xSourceStatus, "configured-empty");
+});
+
+test("a configured X source is recorded as contributed only when an X candidate survives", async () => {
+  const source: CandidateSource = {
+    async gather() {
+      return { candidates: [candidate({ source: "x" })], messages: [] };
+    },
+  };
+  const store = memory();
+
+  const result = await runDailyTrendScan({
+    sources: [source],
+    memory: store.client,
+    now: () => Date.parse("2026-08-24T12:00:00Z"),
+    xSourceConfigured: true,
+  });
+
+  assert.equal(result.xSourceStatus, "contributed");
+  assert.equal(store.scans[0]?.xSourceStatus, "contributed");
 });
 
 test("observationsForDay drops blank title, URL, and source candidates", () => {
@@ -176,7 +215,7 @@ test("a failed observation write still records the completed scan", async () => 
       scannedAt: Date.parse("2026-08-24T12:00:00Z"),
       candidateCount: 1,
       sources: ["hn"],
-      xSourceStatus: "available",
+      xSourceStatus: "configured-empty",
     },
   ]);
   assert.ok(

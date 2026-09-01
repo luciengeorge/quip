@@ -18,10 +18,14 @@ const secret = "test-secret";
 
 function demandMemory() {
   const scans: DemandScanRecord[] = [];
+  let planSequence = 0;
   return {
     memory: {
       async recordDemandScan(scan: DemandScanRecord) {
         scans.push(scan);
+      },
+      async storeDemandCandidatePlan() {
+        return `plan-${++planSequence}`;
       },
     },
     scans,
@@ -231,7 +235,7 @@ test("demand sweep handler catches a thrown sweep error without propagating", as
   );
 });
 
-test("demand sweep handler carries the sealed prepared value unchanged to the handoff", async () => {
+test("demand sweep handler carries only the stored plan id to the handoff", async () => {
   const store = demandMemory();
   const sweep = stackExchangeSweep(store, stackExchangeCandidateResponse());
   const harness = handlerHarness();
@@ -246,9 +250,10 @@ test("demand sweep handler carries the sealed prepared value unchanged to the ha
   const handoff = harness.handoffs[0];
   assert.ok(prepared);
   assert.ok(handoff);
-  const prefix = "Prepared sweep:\n```json\n";
-  const serialized = handoff.message.split(prefix)[1]?.split("\n```")[0];
-  assert.equal(serialized, JSON.stringify(prepared));
-  assert.deepEqual(JSON.parse(serialized ?? "null"), prepared);
+  assert.ok(prepared.planId);
+  assert.match(handoff.message, new RegExp(prepared.planId));
+  assert.doesNotMatch(handoff.message, /\"candidates\"/);
+  assert.doesNotMatch(handoff.message, /\"seal\"/);
+  assert.doesNotMatch(handoff.message, /```json/);
   assert.equal(handoff.message, demandSweepHandoffMessage(prepared));
 });

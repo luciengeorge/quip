@@ -10,6 +10,14 @@ export default defineTool({
     "the other source.",
   inputSchema: z.object({}),
   async execute() {
-    return await runDemandSweepFromEnv();
+    const prepared = await runDemandSweepFromEnv();
+    return {
+      planId: prepared.planId,
+      candidateCount: prepared.plan.candidates.length,
+      sourceStatus: prepared.sourceStatus,
+      redditSourceStatus: prepared.redditSourceStatus,
+      stackExchangeSourceStatus: prepared.stackExchangeSourceStatus,
+      messages: prepared.messages,
+    };
   },
 });
