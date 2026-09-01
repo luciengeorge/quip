@@ -37,7 +37,10 @@ export function weeklyDemandEvidence(
   const scannedDays = scans
     .filter(
       (scan) =>
-        scan.redditSourceStatus === "available" || scan.stackExchangeSourceStatus === "available",
+        scan.redditSourceStatus === "available" ||
+        scan.stackExchangeSourceStatus === "available" ||
+        scan.xSourceStatus === "configured-empty" ||
+        scan.xSourceStatus === "contributed",
     )
     .map((scan) => scan.day);
   const evidence: WeeklyDemandEvidence[] = [];

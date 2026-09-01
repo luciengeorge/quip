@@ -1,7 +1,7 @@
 import { sourceResult, type Candidate, type CandidateSource, type SourceResult } from "./candidates.ts";
 import { leakGuardConfigFromEnv, type LeakGuardConfig } from "./leak-guard.ts";
 
-const X_RECENT_SEARCH_API = "https://api.x.com/2/tweets/search/recent";
+export const X_RECENT_SEARCH_API = "https://api.x.com/2/tweets/search/recent";
 
 export interface XReadReservation {
   allowed: boolean;
@@ -13,6 +13,11 @@ export interface XReadReservation {
 export interface XReadBudget {
   reserveXReads(reads: number): Promise<XReadReservation>;
   settleXReads(reservationId: string, actualReads: number): Promise<void>;
+}
+
+/** Keep all X recent-search adapters on the same bearer-token authentication shape. */
+export function xBearerAuthorization(bearerToken: string): string {
+  return `Bearer ${bearerToken}`;
 }
 
 interface XSearchSourceConfig {
@@ -104,7 +109,7 @@ export class XSearchSource implements CandidateSource {
     url.searchParams.set("tweet.fields", "created_at");
     try {
       const response = await this.fetchImpl(url.toString(), {
-        headers: { Authorization: `Bearer ${this.bearerToken}` },
+        headers: { Authorization: xBearerAuthorization(this.bearerToken) },
       });
       if (!response.ok) {
         const settled = await this.settle(reservation.reservationId, 0);

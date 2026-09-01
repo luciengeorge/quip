@@ -4,6 +4,7 @@ import schema, {
   candidateStatus,
   demandRedditSourceStatus,
   demandStackExchangeSourceStatus,
+  demandXSourceStatus,
   trendXSourceStatus,
 } from "./schema";
 import { assertSecret } from "./auth";
@@ -54,7 +55,7 @@ interface DemandAskInput {
 interface DemandCandidatePlanInput {
   day: string;
   candidates: Array<{
-    source: "reddit" | "stackexchange";
+    source: "reddit" | "stackexchange" | "x";
     title: string;
     url: string;
     context: string;
@@ -741,6 +742,7 @@ export const recordDemandScan = mutation({
     candidateCount: v.number(),
     redditSourceStatus: demandRedditSourceStatus,
     stackExchangeSourceStatus: v.optional(demandStackExchangeSourceStatus),
+    xSourceStatus: v.optional(demandXSourceStatus),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

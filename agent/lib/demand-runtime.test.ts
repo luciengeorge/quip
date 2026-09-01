@@ -5,8 +5,10 @@ import type { Candidate } from "./candidates.ts";
 import {
   REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE,
   STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE,
+  X_DEMAND_SOURCE_NOT_CONFIGURED_MESSAGE,
   RedditDemandSource,
   StackExchangeDemandSource,
+  XDemandSource,
   completeDemandSweep,
   demandSourceSet,
   prepareDemandSweep,
@@ -16,9 +18,17 @@ import type { DemandAsk, DemandCandidatePlan } from "./demand-scan.ts";
 import { fakeFetch } from "./test-fetch.ts";
 import { renderTrendDigest } from "./trend-digest.ts";
 import { fakeApiKey } from "./test-secrets.ts";
+import type { XReadBudget } from "./x.ts";
 
 const now = Date.parse("2026-08-27T12:00:00Z");
 const secret = "test-secret";
+
+const xBudget: XReadBudget = {
+  async reserveXReads(reads) {
+    return { allowed: true, reservationId: `reservation-${reads}`, remainingReads: 5_000 - reads };
+  },
+  async settleXReads() {},
+};
 
 function candidate(): Candidate {
   return {
@@ -107,13 +117,16 @@ test("both absent demand sources preserve the scan and record each unavailabilit
 
   assert.equal(sourceSet.redditSourceConfigured, false);
   assert.equal(sourceSet.stackExchangeSourceConfigured, false);
+  assert.equal(sourceSet.xSourceConfigured, false);
   assert.equal(sourceSet.sources.length, 0);
   assert.equal(fetch.calls.length, 0);
   assert.equal(prepared.sourceStatus, "unavailable");
   assert.equal(prepared.redditSourceStatus, "unavailable");
   assert.equal(prepared.stackExchangeSourceStatus, "unavailable");
+  assert.equal(prepared.xSourceStatus, "not-configured");
   assert.ok(prepared.messages.includes(REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE));
   assert.ok(prepared.messages.includes(STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE));
+  assert.ok(prepared.messages.includes(X_DEMAND_SOURCE_NOT_CONFIGURED_MESSAGE));
   assert.deepEqual(store.scans, [
     {
       day: "2026-08-27",
@@ -121,6 +134,7 @@ test("both absent demand sources preserve the scan and record each unavailabilit
       candidateCount: 0,
       redditSourceStatus: "unavailable",
       stackExchangeSourceStatus: "unavailable",
+      xSourceStatus: "not-configured",
     },
   ]);
   const digest = renderTrendDigest({
@@ -180,6 +194,89 @@ test("demand source setup keeps Reddit and Stack Exchange independent", () => {
   assert.equal(fetch.calls.length, 0);
 });
 
+test("absent X credentials do not assemble X demand and allow Stack Exchange demand to run", async () => {
+  const fetch = fakeFetch(() => ({
+    body: {
+      quota_remaining: 299,
+      items: [
+        {
+          title: "Can anyone recommend a deployment preview tool?",
+          body: "<p>I need one for a small team.</p>",
+          owner: { display_name: "stack_buyer" },
+          answer_count: 1,
+          creation_date: 1_724_500_000,
+          link: "https://softwarerecs.stackexchange.com/questions/1234/deploy-preview-tool",
+          is_answered: false,
+        },
+      ],
+    },
+  }));
+  const sourceSet = demandSourceSet({
+    env: {
+      DEMAND_QUERIES: "recommend tool",
+      STACKEXCHANGE_SITES: "softwarerecs",
+      X_DEMAND_QUERIES: "is there an app lang:en -is:retweet",
+    },
+    budget: xBudget,
+    fetchImpl: fetch.fetch,
+  });
+  const prepared = await prepareDemandSweep({ sourceSet, memory: memory().client, secret, now: () => now });
+
+  assert.equal(sourceSet.xSourceConfigured, false);
+  assert.equal(sourceSet.sources.some((item) => item instanceof XDemandSource), false);
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(prepared.stackExchangeSourceStatus, "available");
+  assert.equal(prepared.xSourceStatus, "not-configured");
+  assert.equal(prepared.plan.candidates[0]?.source, "stackexchange");
+});
+
+test("X demand scan status distinguishes unconfigured, configured-empty, and contributed", async () => {
+  const emptyFetch = fakeFetch(() => ({ body: { data: [] } }));
+  const contributedFetch = fakeFetch(() => ({
+    body: {
+      data: [
+        {
+          id: "1895130251567000001",
+          text: "Is there an app for manga similar to Letterboxd?",
+          created_at: "2026-08-27T10:00:00Z",
+          author_id: "user-1",
+          public_metrics: { reply_count: 3 },
+        },
+      ],
+      includes: { users: [{ id: "user-1", username: "manga_buyer" }] },
+    },
+  }));
+  const configuredEnv = {
+    X_BEARER_TOKEN: "x-token",
+    X_DEMAND_QUERIES: "is there an app lang:en -is:retweet",
+  };
+  const notConfigured = await prepareDemandSweep({
+    sourceSet: demandSourceSet({ env: {}, budget: xBudget, fetchImpl: emptyFetch.fetch }),
+    memory: memory().client,
+    secret,
+    now: () => now,
+  });
+  const configuredEmpty = await prepareDemandSweep({
+    sourceSet: demandSourceSet({ env: configuredEnv, budget: xBudget, fetchImpl: emptyFetch.fetch }),
+    memory: memory().client,
+    secret,
+    now: () => now,
+  });
+  const contributed = await prepareDemandSweep({
+    sourceSet: demandSourceSet({ env: configuredEnv, budget: xBudget, fetchImpl: contributedFetch.fetch }),
+    memory: memory().client,
+    secret,
+    now: () => now,
+  });
+
+  assert.deepEqual(
+    [notConfigured.xSourceStatus, configuredEmpty.xSourceStatus, contributed.xSourceStatus],
+    ["not-configured", "configured-empty", "contributed"],
+  );
+  assert.equal(emptyFetch.calls.length, 1);
+  assert.equal(contributedFetch.calls.length, 1);
+});
+
 test("an available Stack Exchange source continues a sweep when Reddit is absent", async () => {
   const fetch = fakeFetch(() => ({
     body: {
@@ -215,6 +312,7 @@ test("an available Stack Exchange source continues a sweep when Reddit is absent
       candidateCount: 1,
       redditSourceStatus: "unavailable",
       stackExchangeSourceStatus: "available",
+      xSourceStatus: "not-configured",
     },
   ]);
 });
@@ -341,6 +439,7 @@ test("a prepared plan is stored and loaded by id without a model-owned serializa
     initialMessages: [],
     redditSourceConfigured: true as const,
     stackExchangeSourceConfigured: false as const,
+    xSourceConfigured: false as const,
     classificationCap: 30,
   };
 
@@ -367,6 +466,7 @@ test("sealed candidates can be classified once and source tampering fails closed
     initialMessages: [],
     redditSourceConfigured: true as const,
     stackExchangeSourceConfigured: false as const,
+    xSourceConfigured: false as const,
     classificationCap: 30,
   };
   const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });
@@ -424,6 +524,7 @@ test("the same stored plan cannot persist buyer asks twice", async () => {
     initialMessages: [],
     redditSourceConfigured: true as const,
     stackExchangeSourceConfigured: false as const,
+    xSourceConfigured: false as const,
     classificationCap: 30,
   };
   const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });
@@ -476,6 +577,7 @@ test("leaky classifier text never reaches demand storage", async () => {
     initialMessages: [],
     redditSourceConfigured: true as const,
     stackExchangeSourceConfigured: false as const,
+    xSourceConfigured: false as const,
     classificationCap: 30,
   };
   const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });

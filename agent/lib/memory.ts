@@ -171,6 +171,7 @@ export interface DemandScanRecord {
   candidateCount: number;
   redditSourceStatus: "available" | "unavailable";
   stackExchangeSourceStatus?: "available" | "unavailable";
+  xSourceStatus?: "not-configured" | "configured-empty" | "contributed";
 }
 
 const fns = anyApi.memory;

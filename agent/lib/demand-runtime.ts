@@ -20,10 +20,13 @@ import {
   StackExchangeDemandSource,
   stackExchangeDemandSourceFromEnv,
 } from "./stackexchange.ts";
+import { XDemandSource, xDemandSourceFromEnv } from "./x-demand.ts";
+import type { XReadBudget } from "./x.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
 export type DemandSourceStatus = "available" | "unavailable";
+export type XDemandSourceStatus = "not-configured" | "configured-empty" | "contributed";
 
 export interface DemandScanRecord {
   day: string;
@@ -31,6 +34,7 @@ export interface DemandScanRecord {
   candidateCount: number;
   redditSourceStatus: DemandSourceStatus;
   stackExchangeSourceStatus: DemandSourceStatus;
+  xSourceStatus: XDemandSourceStatus;
 }
 
 export interface DemandAskUpsertResult {
@@ -59,11 +63,13 @@ export interface DemandSourceSet {
   initialMessages: string[];
   redditSourceConfigured: boolean;
   stackExchangeSourceConfigured: boolean;
+  xSourceConfigured: boolean;
   classificationCap: number;
 }
 
 export interface DemandSourceSetOptions {
   env?: Env;
+  budget?: XReadBudget;
   fetchImpl?: typeof globalThis.fetch;
 }
 
@@ -74,6 +80,7 @@ export interface PreparedDemandSweep {
   sourceStatus: DemandSourceStatus;
   redditSourceStatus: DemandSourceStatus;
   stackExchangeSourceStatus: DemandSourceStatus;
+  xSourceStatus: XDemandSourceStatus;
   plan: DemandCandidatePlan;
   seal: string;
   messages: string[];
@@ -90,6 +97,8 @@ export const REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Reddit demand sweep was unavailable for this scan; trend sources remain available.";
 export const STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Stack Exchange demand sweep was unavailable for this scan; other demand sources may remain available.";
+export const X_DEMAND_SOURCE_NOT_CONFIGURED_MESSAGE =
+  "X demand source was not configured for this scan; other demand sources remain available.";
 export const DEMAND_CANDIDATE_PLAN_TTL_MS = 48 * 60 * 60 * 1_000;
 
 export function demandSweepSecretFromEnv(env: Env = process.env): string {
@@ -111,6 +120,16 @@ function demandStatus(
   return messages.some((message) => message.startsWith(unavailablePrefix))
     ? "unavailable"
     : "available";
+}
+
+function xDemandSourceStatus(
+  configured: boolean,
+  candidates: readonly { source: string }[],
+): XDemandSourceStatus {
+  if (!configured) return "not-configured";
+  return candidates.some((candidate) => candidate.source === "x")
+    ? "contributed"
+    : "configured-empty";
 }
 
 function planPayload(plan: DemandCandidatePlan): string {
@@ -146,7 +165,7 @@ export function verifiesDemandCandidatePlan(
   return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(seal, "hex"));
 }
 
-/** Build independent Reddit and Stack Exchange sources without API calls. */
+/** Build independent demand sources without API calls. X is present only with credentials and a meter. */
 export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSourceSet {
   const env = options.env ?? process.env;
   const classificationCap = demandClassificationCap(env);
@@ -154,6 +173,7 @@ export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSou
   const initialMessages: string[] = [];
   let redditSourceConfigured = false;
   let stackExchangeSourceConfigured = false;
+  let xSourceConfigured = false;
   try {
     sources.push(redditDemandSourceFromEnv(env, options.fetchImpl));
     redditSourceConfigured = true;
@@ -166,11 +186,22 @@ export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSou
   } catch {
     initialMessages.push(STACKEXCHANGE_DEMAND_SOURCE_UNAVAILABLE_MESSAGE);
   }
+  if (options.budget) {
+    try {
+      sources.push(xDemandSourceFromEnv(options.budget, env, options.fetchImpl));
+      xSourceConfigured = true;
+    } catch {
+      initialMessages.push(X_DEMAND_SOURCE_NOT_CONFIGURED_MESSAGE);
+    }
+  } else {
+    initialMessages.push(X_DEMAND_SOURCE_NOT_CONFIGURED_MESSAGE);
+  }
   return {
     sources,
     initialMessages,
     redditSourceConfigured,
     stackExchangeSourceConfigured,
+    xSourceConfigured,
     classificationCap,
   };
 }
@@ -217,8 +248,11 @@ export async function prepareDemandSweep(options: {
     "Stack Exchange demand source was unavailable",
     messages,
   );
+  const xSourceStatus = xDemandSourceStatus(options.sourceSet.xSourceConfigured, plan.candidates);
   const sourceStatus =
-    redditSourceStatus === "available" || stackExchangeSourceStatus === "available"
+    redditSourceStatus === "available" ||
+    stackExchangeSourceStatus === "available" ||
+    xSourceStatus !== "not-configured"
       ? "available"
       : "unavailable";
   try {
@@ -228,6 +262,7 @@ export async function prepareDemandSweep(options: {
       candidateCount: plan.candidates.length,
       redditSourceStatus,
       stackExchangeSourceStatus,
+      xSourceStatus,
     });
   } catch {
     messages.push("Demand scan record could not be written; no demand evidence was stored.");
@@ -250,6 +285,7 @@ export async function prepareDemandSweep(options: {
     sourceStatus,
     redditSourceStatus,
     stackExchangeSourceStatus,
+    xSourceStatus,
     plan,
     seal,
     messages,
@@ -261,9 +297,10 @@ export async function runDemandSweepFromEnv(
   fetchImpl?: typeof globalThis.fetch,
 ): Promise<PreparedDemandSweep> {
   const env = process.env;
+  const memory = memoryFromEnv();
   return await prepareDemandSweep({
-    sourceSet: demandSourceSet({ env, fetchImpl }),
-    memory: memoryFromEnv(),
+    sourceSet: demandSourceSet({ env, budget: memory, fetchImpl }),
+    memory,
     secret: demandSweepSecretFromEnv(env),
     env,
   });
@@ -391,4 +428,4 @@ function emptyDemandClassification(): DemandClassificationResult {
   };
 }
 
-export { RedditDemandSource, StackExchangeDemandSource };
+export { RedditDemandSource, StackExchangeDemandSource, XDemandSource };

@@ -169,7 +169,10 @@ export async function weeklyTrendContext(
     xSourceStatus: weeklyXSourceStatus(scans),
     demandDataAvailable: demandScans.some(
       (scan) =>
-        scan.redditSourceStatus === "available" || scan.stackExchangeSourceStatus === "available",
+        scan.redditSourceStatus === "available" ||
+        scan.stackExchangeSourceStatus === "available" ||
+        scan.xSourceStatus === "configured-empty" ||
+        scan.xSourceStatus === "contributed",
     ),
   };
 }

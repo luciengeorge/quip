@@ -4,8 +4,9 @@ import { containsLeak, type LeakGuardConfig } from "./leak-guard.ts";
 import type { Candidate } from "./candidates.ts";
 import type { RedditDemandCandidate } from "./reddit.ts";
 import type { StackExchangeDemandCandidate } from "./stackexchange.ts";
+import type { XDemandCandidate } from "./x-demand.ts";
 
-export type DemandCandidate = RedditDemandCandidate | StackExchangeDemandCandidate;
+export type DemandCandidate = RedditDemandCandidate | StackExchangeDemandCandidate | XDemandCandidate;
 
 export interface DemandAsk {
   topicHash: string;
@@ -93,6 +94,7 @@ function validClassificationCap(cap: number): boolean {
 
 function asDemandCandidate(candidate: Candidate): DemandCandidate | null {
   const raw = candidate as Partial<DemandCandidate>;
+  const source = candidate.source;
   const author = nonBlankString(raw.author, 80);
   const subreddit = nonBlankString(raw.subreddit, 80);
   const replyCount = nonNegativeInteger(raw.replyCount);
@@ -100,7 +102,7 @@ function asDemandCandidate(candidate: Candidate): DemandCandidate | null {
     ? raw.sourceText
     : null;
   if (
-    (candidate.source !== "reddit" && candidate.source !== "stackexchange") ||
+    (source !== "reddit" && source !== "stackexchange" && source !== "x") ||
     candidate.title.trim().length === 0 ||
     candidate.url.trim().length === 0 ||
     candidate.context.trim().length === 0 ||
@@ -112,8 +114,22 @@ function asDemandCandidate(candidate: Candidate): DemandCandidate | null {
   ) {
     return null;
   }
+  if (source === "x") {
+    if (subreddit !== "x") return null;
+    return {
+      source,
+      title: candidate.title.trim(),
+      url: candidate.url.trim(),
+      context: candidate.context,
+      timestamp: candidate.timestamp,
+      author,
+      replyCount,
+      subreddit,
+      sourceText,
+    };
+  }
   return {
-    source: candidate.source,
+    source,
     title: candidate.title.trim(),
     url: candidate.url.trim(),
     context: candidate.context,
