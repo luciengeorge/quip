@@ -61,7 +61,8 @@ test("digest renders qualified ideas with evidence, moat, estimate, and owner-fi
   assert.match(digest, /Owner-fit notes are an approximation/);
   assert.match(digest, /## DEMAND/);
   assert.match(digest, /Can anyone recommend a deployment preview tool/);
-  assert.match(digest, /2h old, 1 replies/);
+  // Singular reply count, and the platform named by source rather than assumed to be a subreddit.
+  assert.match(digest, /2h old, 1 reply, /);
 });
 
 test("digest states plainly when zero ideas qualify", () => {

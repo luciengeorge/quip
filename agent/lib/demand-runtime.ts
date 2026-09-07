@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { gatherSources, type CandidateSource } from "./candidates.ts";
 import { demandClassificationCap } from "./config.ts";
+import { renderDailyDemandReport, renderDemandSweepNotice } from "./demand-report.ts";
 import {
   classifyDemandCandidates,
   planDemandCandidates,
@@ -91,7 +92,19 @@ export interface CompletedDemandSweep {
   classification: DemandClassificationResult;
   messages: string[];
   persistence: DemandAskUpsertResult | null;
+  /**
+   * The exact text to post. Rendered here rather than described to the model, because a report
+   * assembled from model-generated text is a report that can be wrong about its own evidence.
+   */
+  report: string;
 }
+
+/** What the sealed-result path establishes, before the report is rendered from it. */
+type CompletedDemandSweepOutcome = Omit<CompletedDemandSweep, "report"> & {
+  /** Null when no verified plan was in scope, so no day can be trusted. */
+  day: string | null;
+  candidateCount: number;
+};
 
 export const REDDIT_DEMAND_SOURCE_UNAVAILABLE_MESSAGE =
   "Reddit demand sweep was unavailable for this scan; trend sources remain available.";
@@ -307,14 +320,14 @@ export async function runDemandSweepFromEnv(
 }
 
 /** Revalidate sealed classifier results before storage. A bad seal is an empty, fail-closed result. */
-export async function completeDemandSweep(options: {
+async function completeDemandSweepOutcome(options: {
   planId: string;
   classifications: readonly unknown[];
   memory: Pick<DemandScanMemory, "loadDemandCandidatePlan" | "completeDemandCandidatePlan">;
   secret: string;
   now?: () => number;
   env?: Env;
-}): Promise<CompletedDemandSweep> {
+}): Promise<CompletedDemandSweepOutcome> {
   let stored: DemandCandidatePlanRecord | null;
   try {
     stored = await options.memory.loadDemandCandidatePlan(options.planId);
@@ -324,6 +337,8 @@ export async function completeDemandSweep(options: {
       classification: emptyDemandClassification(),
       messages: ["Demand sweep results were rejected because the stored candidate plan could not be loaded."],
       persistence: null,
+      day: null,
+      candidateCount: 0,
     };
   }
   if (!stored) {
@@ -332,6 +347,8 @@ export async function completeDemandSweep(options: {
       classification: emptyDemandClassification(),
       messages: ["Demand sweep results were rejected because the stored candidate plan was not found."],
       persistence: null,
+      day: null,
+      candidateCount: 0,
     };
   }
   if (!verifiesDemandCandidatePlan(stored.plan, options.secret, stored.seal)) {
@@ -340,6 +357,8 @@ export async function completeDemandSweep(options: {
       classification: emptyDemandClassification(),
       messages: ["Demand sweep results were rejected because the stored candidate seal was invalid."],
       persistence: null,
+      day: null,
+      candidateCount: 0,
     };
   }
   if (stored.status !== "pending") {
@@ -352,6 +371,8 @@ export async function completeDemandSweep(options: {
           : "Demand sweep results were rejected because the stored candidate plan was already completed.",
       ],
       persistence: null,
+      day: stored.plan.day,
+      candidateCount: stored.plan.candidates.length,
     };
   }
   if (stored.expiresAt <= (options.now ?? Date.now)()) {
@@ -360,6 +381,8 @@ export async function completeDemandSweep(options: {
       classification: emptyDemandClassification(),
       messages: ["Demand sweep results were rejected because the stored candidate plan expired."],
       persistence: null,
+      day: stored.plan.day,
+      candidateCount: stored.plan.candidates.length,
     };
   }
   const classification = classifyDemandCandidates(
@@ -399,6 +422,8 @@ export async function completeDemandSweep(options: {
             : "Demand ask persistence skipped because the stored candidate plan was already used or missing.",
         ],
         persistence: null,
+        day: stored.plan.day,
+        candidateCount: stored.plan.candidates.length,
       };
     }
     if (persistence.skippedCount > 0) {
@@ -407,15 +432,64 @@ export async function completeDemandSweep(options: {
     if (persistence.dedupedCount > 0) {
       messages.push(`Demand ask persistence skipped ${persistence.dedupedCount} existing permalinks.`);
     }
-    return { asks: classification.asks, classification, messages, persistence };
+    return {
+      asks: classification.asks,
+      classification,
+      messages,
+      persistence,
+      day: stored.plan.day,
+      candidateCount: stored.plan.candidates.length,
+    };
   } catch {
     return {
       asks: [],
       classification,
       messages: [...messages, "Demand ask persistence failed; no new demand evidence was stored."],
       persistence: null,
+      day: stored.plan.day,
+      candidateCount: stored.plan.candidates.length,
     };
   }
+}
+
+/**
+ * Revalidate sealed classifier results, store them, and render the day's report.
+ *
+ * The report text is produced here from persisted values, then posted verbatim. Describing the
+ * evidence to a model and asking it to write the summary is how a report ends up disagreeing
+ * with the data it claims to describe.
+ */
+export async function completeDemandSweep(options: {
+  planId: string;
+  classifications: readonly unknown[];
+  memory: Pick<DemandScanMemory, "loadDemandCandidatePlan" | "completeDemandCandidatePlan">;
+  secret: string;
+  now?: () => number;
+  env?: Env;
+}): Promise<CompletedDemandSweep> {
+  const now = options.now ?? Date.now;
+  const outcome = await completeDemandSweepOutcome(options);
+  const generatedAt = now();
+  const report =
+    outcome.day === null
+      ? renderDemandSweepNotice(
+          utcDay(generatedAt),
+          outcome.messages[0] ?? "the stored candidate plan could not be used",
+        )
+      : renderDailyDemandReport({
+          day: outcome.day,
+          asks: outcome.asks,
+          candidateCount: outcome.candidateCount,
+          generatedAt,
+          notes: outcome.messages,
+        });
+  return {
+    asks: outcome.asks,
+    classification: outcome.classification,
+    messages: outcome.messages,
+    persistence: outcome.persistence,
+    report,
+  };
 }
 
 function emptyDemandClassification(): DemandClassificationResult {

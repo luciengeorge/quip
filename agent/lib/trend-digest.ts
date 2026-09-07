@@ -1,3 +1,4 @@
+import { demandAskLine } from "./demand-report.ts";
 import type { AcceptedIdea, IdeaRejection, MoatClass } from "./idea-gate.ts";
 import { containsLeak } from "./leak-guard.ts";
 import type { DemandAskRecord } from "./memory.ts";
@@ -109,13 +110,8 @@ function demandAskText(ask: DemandAskRecord): string {
   ].join("\n");
 }
 
-function demandAge(askedAt: number, generatedAt: number): string {
-  const hours = Math.floor(Math.max(0, generatedAt - askedAt) / (60 * 60 * 1_000));
-  return hours < 48 ? `${hours}h old` : `${Math.floor(hours / 24)}d old`;
-}
-
 function demandLine(ask: DemandAskRecord, generatedAt: number): string {
-  return `- "${ask.quote}" (${demandAge(ask.askedAt, generatedAt)}, ${ask.replyCount} replies, r/${ask.subreddit}): ${ask.permalink}`;
+  return demandAskLine(ask, generatedAt);
 }
 
 /** Render the short weekly report only from measured trends and gate-approved ideas. */
