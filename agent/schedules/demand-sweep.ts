@@ -1,6 +1,7 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 
 import slack from "../channels/slack.ts";
+import { recordScheduleRun, type RecordScheduleRunDependencies } from "../lib/cron-run.ts";
 import {
   runDemandSweepFromEnv,
   type PreparedDemandSweep,
@@ -14,6 +15,7 @@ interface DemandSweepScheduleDependencies {
   env?: Env;
   logger?: Pick<Console, "log" | "warn">;
   runDemandSweep?: DemandSweepRunner;
+  cronRun?: RecordScheduleRunDependencies;
 }
 
 const CLASSIFIER_OUTPUT_SCHEMA =
@@ -40,38 +42,46 @@ export async function runDemandSweepSchedule(
   const env = dependencies.env ?? process.env;
   const logger = dependencies.logger ?? console;
   const runDemandSweep = dependencies.runDemandSweep ?? runDemandSweepFromEnv;
-  try {
-    const prepared = await runDemandSweep();
-    logger.log(
-      `[demand-sweep] stored ${prepared.plan.candidates.length} candidates; status=${prepared.sourceStatus}; reddit=${prepared.redditSourceStatus}; stackexchange=${prepared.stackExchangeSourceStatus}`,
-    );
-    for (const message of prepared.messages) logger.warn(`[demand-sweep] ${message}`);
+  await recordScheduleRun(
+    "demand-sweep",
+    async () => {
+      try {
+        const prepared = await runDemandSweep();
+        logger.log(
+          `[demand-sweep] stored ${prepared.plan.candidates.length} candidates; status=${prepared.sourceStatus}; reddit=${prepared.redditSourceStatus}; stackexchange=${prepared.stackExchangeSourceStatus}`,
+        );
+        for (const message of prepared.messages) logger.warn(`[demand-sweep] ${message}`);
 
-    const channelId = env.SLACK_CHANNEL_ID?.trim();
-    if (!channelId) {
-      logger.warn("[demand-sweep] Slack handoff skipped: SLACK_CHANNEL_ID is not set.");
-      return;
-    }
-    if (
-      prepared.sourceStatus !== "available" ||
-      prepared.plan.candidates.length === 0 ||
-      !prepared.planId
-    ) {
-      logger.log(
-        `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}; stored=${Boolean(prepared.planId)}`,
-      );
-      return;
-    }
-    waitUntil(
-      to(slack, { channelId })
-        .send(demandSweepHandoffMessage(prepared), { auth: appAuth })
-        .catch((error: unknown) => {
-          logger.warn("[demand-sweep] Slack handoff failed cleanly:", error);
-        }),
-    );
-  } catch (error) {
-    logger.warn("[demand-sweep] daily sweep failed cleanly:", error);
-  }
+        const channelId = env.SLACK_CHANNEL_ID?.trim();
+        if (!channelId) {
+          logger.warn("[demand-sweep] Slack handoff skipped: SLACK_CHANNEL_ID is not set.");
+          return false;
+        }
+        if (
+          prepared.sourceStatus !== "available" ||
+          prepared.plan.candidates.length === 0 ||
+          !prepared.planId
+        ) {
+          logger.log(
+            `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}; stored=${Boolean(prepared.planId)}`,
+          );
+          return false;
+        }
+        waitUntil(
+          to(slack, { channelId })
+            .send(demandSweepHandoffMessage(prepared), { auth: appAuth })
+            .catch((error: unknown) => {
+              logger.warn("[demand-sweep] Slack handoff failed cleanly:", error);
+            }),
+        );
+        return true;
+      } catch (error) {
+        logger.warn("[demand-sweep] daily sweep failed cleanly:", error);
+        return false;
+      }
+    },
+    dependencies.cronRun,
+  );
 }
 
 // 08:35 UTC is clear of poof's 15:00 UTC weekday cycle and 21:00 UTC Friday scorecard.
