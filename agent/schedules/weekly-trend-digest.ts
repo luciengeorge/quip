@@ -1,6 +1,7 @@
-import { defineSchedule } from "eve/schedules";
+import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 
 import slack from "../channels/slack.ts";
+import { recordScheduleRun, type RecordScheduleRunDependencies } from "../lib/cron-run.ts";
 import { resolveDigestDelivery } from "../lib/digest-delivery.ts";
 import { renderTrendDigest } from "../lib/trend-digest.ts";
 import { weeklyTrendContextFromEnv } from "../lib/trend-runtime.ts";
@@ -15,44 +16,74 @@ const WEEKLY_DIGEST_PROMPT = [
   "6. Post exactly the returned digest and nothing else. If no idea passes, post its empty result without filling a slot.",
 ].join(" ");
 
+type Env = Readonly<Record<string, string | undefined>>;
+type ScheduleArgs = Pick<ScheduleHandlerArgs, "to" | "waitUntil" | "appAuth">;
+
+interface WeeklyTrendDigestScheduleDependencies {
+  env?: Env;
+  logger?: Pick<Console, "log" | "warn">;
+  loadContext?: typeof weeklyTrendContextFromEnv;
+  cronRun?: RecordScheduleRunDependencies;
+}
+
+export async function runWeeklyTrendDigestSchedule(
+  { to, waitUntil, appAuth }: ScheduleArgs,
+  dependencies: WeeklyTrendDigestScheduleDependencies = {},
+): Promise<void> {
+  const env = dependencies.env ?? process.env;
+  const logger = dependencies.logger ?? console;
+  const loadContext = dependencies.loadContext ?? weeklyTrendContextFromEnv;
+  await recordScheduleRun(
+    "weekly-trend-digest",
+    async () => {
+      let context;
+      try {
+        context = await loadContext();
+      } catch (error) {
+        logger.warn("[trend-digest] weekly context failed cleanly:", error);
+        return false;
+      }
+      const fallbackDigest = renderTrendDigest({
+        trends: context.trends,
+        demandAsks: context.demandAsks,
+        ideas: [],
+        rejections: [],
+        spend: context.spend,
+        xSourceStatus: context.xSourceStatus,
+        demandDataAvailable: context.demandDataAvailable,
+        generatedAt: context.generatedAt,
+      });
+      const delivery = resolveDigestDelivery(env, env.SLACK_CHANNEL_ID, logger);
+      if (delivery.mode === "log") {
+        logger.warn(
+          `[trend-digest] Slack delivery skipped: ${delivery.reason}. Full digest follows.`,
+        );
+        logger.log(fallbackDigest);
+        return false;
+      }
+      try {
+        waitUntil(
+          to(slack, { channelId: delivery.channelId })
+            .send(WEEKLY_DIGEST_PROMPT, { auth: appAuth })
+            .catch((error: unknown) => {
+              logger.warn("[trend-digest] Slack delivery failed cleanly:", error);
+            }),
+        );
+        return true;
+      } catch (error) {
+        logger.warn("[trend-digest] Slack dispatch failed cleanly:", error);
+        logger.log(fallbackDigest);
+        return false;
+      }
+    },
+    dependencies.cronRun,
+  );
+}
+
 // Sunday 18:35 UTC gives the daily series a full week and avoids poof's weekday schedules.
 export default defineSchedule({
   cron: "35 18 * * 0",
-  async run({ to, waitUntil, appAuth }) {
-    let context;
-    try {
-      context = await weeklyTrendContextFromEnv();
-    } catch (error) {
-      console.warn("[trend-digest] weekly context failed cleanly:", error);
-      return;
-    }
-    const fallbackDigest = renderTrendDigest({
-      trends: context.trends,
-      demandAsks: context.demandAsks,
-      ideas: [],
-      rejections: [],
-      spend: context.spend,
-      xSourceStatus: context.xSourceStatus,
-      demandDataAvailable: context.demandDataAvailable,
-      generatedAt: context.generatedAt,
-    });
-    const delivery = resolveDigestDelivery(process.env, process.env.SLACK_CHANNEL_ID);
-    if (delivery.mode === "log") {
-      console.warn(`[trend-digest] Slack delivery skipped: ${delivery.reason}. Full digest follows.`);
-      console.log(fallbackDigest);
-      return;
-    }
-    try {
-      waitUntil(
-        to(slack, { channelId: delivery.channelId })
-          .send(WEEKLY_DIGEST_PROMPT, { auth: appAuth })
-          .catch((error: unknown) => {
-          console.warn("[trend-digest] Slack delivery failed cleanly:", error);
-          }),
-      );
-    } catch (error) {
-      console.warn("[trend-digest] Slack dispatch failed cleanly:", error);
-      console.log(fallbackDigest);
-    }
+  async run(args) {
+    await runWeeklyTrendDigestSchedule(args);
   },
 });
