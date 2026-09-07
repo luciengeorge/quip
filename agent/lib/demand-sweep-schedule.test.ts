@@ -143,7 +143,11 @@ test("demand sweep handler records a row when both sources are unavailable", asy
       xSourceStatus: "not-configured",
     },
   ]);
-  assert.equal(harness.handoffs.length, 0);
+  // A dark day is reported, not passed over in silence: nothing posted is indistinguishable
+  // from the cron never firing, which is the ambiguity the daily report exists to remove.
+  assert.equal(harness.handoffs.length, 1);
+  assert.match(harness.handoffs[0]?.message ?? "", /No demand scan today: no demand source was available\./);
+  assert.doesNotMatch(harness.handoffs[0]?.message ?? "", /complete_demand_sweep/);
   assert.match(harness.logs[0] ?? "", /status=unavailable/);
   assert.match(harness.logs[0] ?? "", /stored 0 candidates/);
 });
@@ -170,7 +174,12 @@ test("demand sweep handler records a row when an available scan has zero candida
       xSourceStatus: "not-configured",
     },
   ]);
-  assert.equal(harness.handoffs.length, 0);
+  assert.equal(harness.handoffs.length, 1);
+  assert.match(
+    harness.handoffs[0]?.message ?? "",
+    /No demand scan today: the sources returned no candidates\./,
+  );
+  assert.doesNotMatch(harness.handoffs[0]?.message ?? "", /complete_demand_sweep/);
   assert.match(harness.logs[0] ?? "", /status=available/);
   assert.match(harness.logs[0] ?? "", /stored 0 candidates/);
 });
@@ -217,7 +226,11 @@ test("demand sweep handler hands off only available scans with candidates", asyn
   });
   await unavailableHarness.settle();
 
-  assert.equal(unavailableHarness.handoffs.length, 0);
+  // Still exactly one message, but a notice rather than a classification handoff: an unavailable
+  // source must never reach the classifier, and must never be silent either.
+  assert.equal(unavailableHarness.handoffs.length, 1);
+  assert.doesNotMatch(unavailableHarness.handoffs[0]?.message ?? "", /complete_demand_sweep/);
+  assert.match(unavailableHarness.handoffs[0]?.message ?? "", /No demand scan today/);
 });
 
 test("demand sweep handler catches a thrown sweep error without propagating", async () => {

@@ -2,6 +2,7 @@ import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 
 import slack from "../channels/slack.ts";
 import { recordScheduleRun, type RecordScheduleRunDependencies } from "../lib/cron-run.ts";
+import { renderDemandSweepNotice } from "../lib/demand-report.ts";
 import {
   runDemandSweepFromEnv,
   type PreparedDemandSweep,
@@ -24,14 +25,29 @@ const CLASSIFIER_OUTPUT_SCHEMA =
 export function demandSweepHandoffMessage(prepared: PreparedDemandSweep): string {
   if (!prepared.planId) throw new Error("Demand candidate plan was not stored");
   return [
-    "Run the buyer-intent demand classification as evidence only. Never draft a reply, send a message, post, or pitch a product.",
+    "Run the buyer-intent demand classification as evidence only. Never draft a reply, contact an asker, post publicly, or pitch a product. The only text you may produce is the report this run returns to you.",
     `The sealed candidate plan is stored server-side under id ${prepared.planId}. Do not reproduce, edit, or return the plan.`,
     "1. Call get_demand_candidate_plan exactly once with that id. It returns the bounded fetched candidates for classification only.",
     "2. Call demand_ask_classifier exactly once with those candidates. Classify every returned candidate once, keyed by its exact permalink. Supply this strict output schema: " +
       CLASSIFIER_OUTPUT_SCHEMA +
       ". Do not call it for any candidate outside the sealed plan.",
     `3. Call complete_demand_sweep exactly once with planId ${prepared.planId} and the classifier's classifications.`,
-    "4. Return no public-facing text.",
+    "4. Post its returned `report` field exactly as given, and nothing else. Do not summarise it, reorder it, add to it, or comment on it.",
+  ].join("\n");
+}
+
+/**
+ * The handoff used when a sweep produced nothing to classify.
+ *
+ * A dark day used to be logged and nothing was posted, which is indistinguishable from the cron
+ * never firing. That ambiguity is the reason this reporting exists, so a scan that found nothing
+ * says so out loud.
+ */
+export function demandSweepNoticeMessage(day: string, reason: string): string {
+  return [
+    "Post the following text exactly as given, and nothing else. Do not summarise it, add to it, or comment on it.",
+    "",
+    renderDemandSweepNotice(day, reason),
   ].join("\n");
 }
 
@@ -57,19 +73,28 @@ export async function runDemandSweepSchedule(
           logger.warn("[demand-sweep] Slack handoff skipped: SLACK_CHANNEL_ID is not set.");
           return false;
         }
-        if (
+        const nothingToClassify =
           prepared.sourceStatus !== "available" ||
           prepared.plan.candidates.length === 0 ||
-          !prepared.planId
-        ) {
+          !prepared.planId;
+        if (nothingToClassify) {
           logger.log(
             `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}; stored=${Boolean(prepared.planId)}`,
           );
-          return false;
         }
+        const message = nothingToClassify
+          ? demandSweepNoticeMessage(
+              prepared.plan.day,
+              prepared.sourceStatus !== "available"
+                ? "no demand source was available"
+                : prepared.plan.candidates.length === 0
+                  ? "the sources returned no candidates"
+                  : "the candidate plan could not be stored",
+            )
+          : demandSweepHandoffMessage(prepared);
         waitUntil(
           to(slack, { channelId })
-            .send(demandSweepHandoffMessage(prepared), { auth: appAuth })
+            .send(message, { auth: appAuth })
             .catch((error: unknown) => {
               logger.warn("[demand-sweep] Slack handoff failed cleanly:", error);
             }),
