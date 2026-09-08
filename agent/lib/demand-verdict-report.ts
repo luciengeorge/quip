@@ -15,6 +15,20 @@ import { containsLeak } from "./leak-guard.ts";
  * verdicts come first, the evidence that produced them sits underneath, and raw asks are last.
  */
 
+/** A verdict block a reader will actually finish. Detail beyond this belongs in the sources. */
+export const VERDICT_MAX_SUMMARY_CHARS = 320;
+export const VERDICT_MAX_INCUMBENTS_SHOWN = 3;
+
+function clip(text: string, max: number): string {
+  const flat = flattenQuote(text);
+  if (flat.length <= max) return flat;
+  // Cut on a word boundary. A summary severed mid-word reads as a bug, which undermines the
+  // finding it is reporting.
+  const cut = flat.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).replace(/[,;:.]$/u, "")}...`;
+}
+
 const VERDICT_LABEL = {
   "worth-a-look": "WORTH A LOOK",
   "already-solved": "ALREADY SOLVED",
@@ -49,18 +63,22 @@ function verdictBlock(theme: DemandThemeRecord, generatedAt: number): string[] {
     `**${theme.label}** ${VERDICT_LABEL[theme.verdict ?? "unresearchable"]}`,
     `${theme.permalinks.length} ${theme.permalinks.length === 1 ? "ask" : "asks"}, ${askers} ${askers === 1 ? "asker" : "askers"}, ${themeAge(theme, generatedAt)}.`,
   ];
-  if (theme.researchSummary) lines.push(flattenQuote(theme.researchSummary));
+  if (theme.researchSummary) lines.push(clip(theme.researchSummary, VERDICT_MAX_SUMMARY_CHARS));
 
   const incumbents = theme.incumbents ?? [];
   if (incumbents.length > 0) {
+    const shown = incumbents.slice(0, VERDICT_MAX_INCUMBENTS_SHOWN);
+    const rest = incumbents.length - shown.length;
     lines.push(
-      `Incumbents: ${incumbents.map((one) => `${one.name} (${flattenQuote(one.covers)})`).join("; ")}.`,
+      `Incumbents: ${shown.map((one) => `${one.name} (${clip(one.covers, 90)})`).join("; ")}${rest > 0 ? `, and ${rest} more` : ""}.`,
     );
   } else if (theme.incumbentCoverage === "none") {
     lines.push("Incumbents: none found.");
   }
 
   // A build estimate for something that already exists is noise: the decision is already made.
+  // An absent estimate prints nothing at all, because "~0 days" reads as trivial when it means
+  // the component list could not be priced.
   if (theme.buildDays !== undefined && theme.verdict !== "already-solved") {
     lines.push(`Build: ~${theme.buildDays} ${theme.buildDays === 1 ? "day" : "days"}${theme.buildBreakdown ? ` (${theme.buildBreakdown})` : ""}.`);
   }

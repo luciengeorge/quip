@@ -171,8 +171,8 @@ export interface StoredThemeResearch {
   incumbents: { name: string; covers: string }[];
   researchSummary: string;
   sources: { url: string; claim: string }[];
-  buildDays: number;
-  buildBreakdown: string;
+  buildDays?: number;
+  buildBreakdown?: string;
   verdict: "worth-a-look" | "already-solved" | "unresearchable";
 }
 
