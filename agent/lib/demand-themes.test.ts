@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEMAND_THEME_MAX_ASKS_PER_RUN,
   DEMAND_THEME_MAX_NEW_PER_RUN,
   DEMAND_THEME_RESEARCH_TTL_MS,
   demandThemeKey,
   distinctAskerCount,
   meetsVerdictBar,
   themesNeedingResearch,
+  unassignedAsks,
   validateThemeAssignments,
   verdictFor,
   type DemandThemeRecord,
@@ -135,4 +137,26 @@ test("the verdict follows the coverage rule, not the researcher's tone", () => {
   assert.equal(verdictFor("covers"), "already-solved");
   assert.equal(verdictFor("partial"), "worth-a-look");
   assert.equal(verdictFor("none"), "worth-a-look");
+});
+
+test("grouping works from every unthemed ask in the window, not just today's", () => {
+  // 73 asks predated this feature. Offering only the current run's asks would leave them
+  // permanently ungrouped, and a run that failed part way would strand its asks the same way.
+  const asks = [
+    { permalink: "a" },
+    { permalink: "b" },
+    { permalink: "c" },
+  ];
+  const themed = [{ permalinks: ["b"] }];
+  assert.deepEqual(
+    unassignedAsks(asks, themed).map((ask) => ask.permalink),
+    ["a", "c"],
+  );
+});
+
+test("the per-run grouping set is capped so a backlog drains instead of flooding", () => {
+  const asks = Array.from({ length: DEMAND_THEME_MAX_ASKS_PER_RUN + 15 }, (_v, i) => ({
+    permalink: `p${i}`,
+  }));
+  assert.equal(unassignedAsks(asks, []).length, DEMAND_THEME_MAX_ASKS_PER_RUN);
 });

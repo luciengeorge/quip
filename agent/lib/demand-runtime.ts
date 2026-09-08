@@ -8,6 +8,7 @@ import {
   distinctAskerCount,
   isIncumbentCoverage,
   themesNeedingResearch,
+  unassignedAsks,
   validateThemeAssignments,
   verdictFor,
 } from "./demand-themes.ts";
@@ -119,14 +120,19 @@ export interface CompletedDemandSweep {
   classification: DemandClassificationResult;
   messages: string[];
   persistence: DemandAskUpsertResult | null;
-  /** Asks stored by this run, which are the only ones the theme pass may group. */
+  /** Asks stored by this run, reported as the day's news. */
   newAsks: { permalink: string; quote: string; askedFor: string }[];
+  /** Every ask in the window with no theme yet, which is what the grouping pass works from. */
+  asksToGroup: { permalink: string; quote: string; askedFor: string }[];
   /** Themes still inside the window, so a recurring want joins its theme instead of forking one. */
   openThemes: { themeKey: string; label: string }[];
 }
 
 /** What the sealed-result path establishes, before themes and the report are derived from it. */
-type CompletedDemandSweepOutcome = Omit<CompletedDemandSweep, "newAsks" | "openThemes"> & {
+type CompletedDemandSweepOutcome = Omit<
+  CompletedDemandSweep,
+  "newAsks" | "asksToGroup" | "openThemes"
+> & {
   /** Null when no verified plan was in scope, so no day can be trusted. */
   day: string | null;
   candidateCount: number;
@@ -492,7 +498,7 @@ export async function completeDemandSweep(options: {
   secret: string;
   now?: () => number;
   env?: Env;
-  themeMemory?: Pick<DemandThemeMemory, "openDemandThemes">;
+  themeMemory?: Pick<DemandThemeMemory, "openDemandThemes" | "demandAsksInRange">;
 }): Promise<CompletedDemandSweep> {
   const now = options.now ?? Date.now;
   const outcome = await completeDemandSweepOutcome(options);
@@ -505,14 +511,21 @@ export async function completeDemandSweep(options: {
     .map((ask) => ({ permalink: ask.permalink, quote: ask.quote, askedFor: ask.askedFor }));
 
   let openThemes: { themeKey: string; label: string }[] = [];
-  if (newAsks.length > 0) {
-    try {
-      const themeMemory = options.themeMemory ?? memoryFromEnv();
-      const themes = await themeMemory.openDemandThemes(themeWindowStart(now()));
-      openThemes = themes.map((theme) => ({ themeKey: theme.themeKey, label: theme.label }));
-    } catch (error) {
-      console.warn("[demand-sweep] open themes unavailable; new labels only:", error);
-    }
+  let asksToGroup: { permalink: string; quote: string; askedFor: string }[] = [];
+  try {
+    const themeMemory = options.themeMemory ?? memoryFromEnv();
+    const at = now();
+    const themes = await themeMemory.openDemandThemes(themeWindowStart(at));
+    openThemes = themes.map((theme) => ({ themeKey: theme.themeKey, label: theme.label }));
+    const { startDay, endDay } = askWindowDays(at);
+    const windowAsks = await themeMemory.demandAsksInRange(startDay, endDay);
+    asksToGroup = unassignedAsks(windowAsks, themes).map((ask) => ({
+      permalink: ask.permalink,
+      quote: ask.quote,
+      askedFor: ask.askedFor,
+    }));
+  } catch (error) {
+    console.warn("[demand-sweep] theme context unavailable; grouping skipped:", error);
   }
 
   return {
@@ -521,6 +534,7 @@ export async function completeDemandSweep(options: {
     messages: outcome.messages,
     persistence: outcome.persistence,
     newAsks,
+    asksToGroup,
     openThemes,
   };
 }
@@ -571,16 +585,19 @@ export async function applyDemandThemeAssignments(
 ): Promise<ThemeAssignmentResult> {
   const now = (options.now ?? Date.now)();
   const memory = options.memory ?? memoryFromEnv();
-  const today = utcDay(now);
-  const todaysAsks = await memory.demandAsksInRange(today, today);
+  const { startDay, endDay } = askWindowDays(now);
+  const windowAsks = await memory.demandAsksInRange(startDay, endDay);
   const openThemes = await memory.openDemandThemes(themeWindowStart(now));
+  // Only asks with no theme yet are assignable. Re-filing an assigned ask would place it under a
+  // second theme and count the same person twice toward two different verdicts.
+  const groupable = unassignedAsks(windowAsks, openThemes);
 
   const validation = validateThemeAssignments(
     raw,
-    todaysAsks.map((ask) => ask.permalink),
+    groupable.map((ask) => ask.permalink),
     openThemes,
   );
-  const authorByPermalink = new Map(todaysAsks.map((ask) => [ask.permalink, ask.author]));
+  const authorByPermalink = new Map(windowAsks.map((ask) => [ask.permalink, ask.author]));
   const applied = await memory.applyDemandThemeAssignments({
     at: now,
     assignments: validation.assignments.map((assignment) => ({
@@ -594,7 +611,7 @@ export async function applyDemandThemeAssignments(
   // Re-read rather than reasoning about what the write did: the recurrence count decides whether
   // a research call is spent, and it must come from the stored set, not from a local guess.
   const refreshed = await memory.openDemandThemes(themeWindowStart(now));
-  const quoteByPermalink = new Map(todaysAsks.map((ask) => [ask.permalink, ask.quote]));
+  const quoteByPermalink = new Map(windowAsks.map((ask) => [ask.permalink, ask.quote]));
   const needing = themesNeedingResearch(refreshed, now).map((theme) => ({
     themeKey: theme.themeKey,
     label: theme.label,

@@ -13,6 +13,10 @@
  * The recurrence threshold doubles as the junk filter. A fragment that names nothing cannot be
  * grouped with anything, so it never reaches two askers and never earns a verdict. That is a
  * better filter than a specificity heuristic, which would have to guess at meaning.
+ *
+ * Grouping works from every ask in the window that has no theme yet, not just the ones a single
+ * run happened to store. Asks collected before this existed would otherwise never be grouped, and
+ * a run that failed part way would strand its asks permanently.
  */
 
 export const DEMAND_THEME_WINDOW_DAYS = 14;
@@ -206,4 +210,16 @@ export function verdictFor(coverage: IncumbentCoverage): DemandVerdict {
 
 export function isIncumbentCoverage(value: unknown): value is IncumbentCoverage {
   return value === "covers" || value === "partial" || value === "none";
+}
+
+/** Asks the report can still learn from: inside the window and not yet filed under any theme. */
+export const DEMAND_THEME_MAX_ASKS_PER_RUN = 40;
+
+export function unassignedAsks<T extends { permalink: string }>(
+  windowAsks: readonly T[],
+  themes: readonly Pick<DemandThemeRecord, "permalinks">[],
+  limit: number = DEMAND_THEME_MAX_ASKS_PER_RUN,
+): T[] {
+  const assigned = new Set(themes.flatMap((theme) => theme.permalinks));
+  return windowAsks.filter((ask) => !assigned.has(ask.permalink)).slice(0, limit);
 }
