@@ -147,6 +147,8 @@ export interface DemandAskUpsertResult {
   insertedCount: number;
   skippedCount: number;
   dedupedCount: number;
+  /** Permalinks stored by this call. A repeat ask is evidence, but it is not news. */
+  insertedPermalinks: string[];
 }
 
 export interface DemandCandidatePlanRecord {
@@ -163,6 +165,7 @@ export interface DemandCandidatePlanCompletion {
   insertedCount: number;
   skippedCount: number;
   dedupedCount: number;
+  insertedPermalinks: string[];
 }
 
 export interface DemandScanRecord {

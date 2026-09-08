@@ -62,7 +62,7 @@ test("asks are ranked by score and capped", () => {
   const bullets = report.split("\n").filter((line) => line.startsWith("- "));
   assert.equal(bullets.length, DAILY_DEMAND_REPORT_MAX_ASKS);
   assert.match(bullets[0] ?? "", /score 11/);
-  assert.match(report, new RegExp(`${DAILY_DEMAND_REPORT_MAX_ASKS} of ${asks.length} asks shown`));
+  assert.match(report, new RegExp(`${DAILY_DEMAND_REPORT_MAX_ASKS} new asks of ${asks.length}`));
 });
 
 test("a quiet day says so explicitly instead of rendering nothing", () => {
@@ -74,7 +74,7 @@ test("a quiet day says so explicitly instead of rendering nothing", () => {
     candidateCount: 30,
     generatedAt,
   });
-  assert.match(report, /No buyer-intent asks qualified today, from 30 candidates scanned\./);
+  assert.match(report, /No new buyer-intent asks today, from 30 candidates scanned\./);
   assert.match(report, /# Quip buyer intent, 2026-09-07/);
 });
 
@@ -98,7 +98,7 @@ test("a credential-shaped ask is dropped before it can be posted", () => {
     generatedAt,
   });
   assert.equal(report.includes(secret), false);
-  assert.match(report, /1 of 1 asks shown/);
+  assert.match(report, /1 new ask, from 4 candidates scanned/);
 });
 
 test("classifier and persistence notes are carried through", () => {
@@ -117,4 +117,30 @@ test("a dark day renders a notice naming the reason", () => {
     renderDemandSweepNotice("2026-09-07", "no demand source was available"),
     "# Quip buyer intent, 2026-09-07\nNo demand scan today: no demand source was available.",
   );
+});
+
+test("repeat asks are counted, not re-listed", () => {
+  // Persistence deduped by permalink while the report rendered everything classified, so an ask
+  // that stayed open was re-served every day. Four of eight asks on 2026-09-08 were 09-07 repeats.
+  const report = renderDailyDemandReport({
+    day: "2026-09-08",
+    asks: [ask()],
+    candidateCount: 30,
+    repeatCount: 7,
+    generatedAt,
+  });
+  assert.match(report, /1 new ask, from 30 candidates scanned\. 7 previously reported asks are still open\./);
+  const bullets = report.split("\n").filter((line) => line.startsWith("- "));
+  assert.equal(bullets.length, 1);
+});
+
+test("a day of only repeats reports zero new, not zero asks", () => {
+  const report = renderDailyDemandReport({
+    day: "2026-09-08",
+    asks: [],
+    candidateCount: 30,
+    repeatCount: 1,
+    generatedAt,
+  });
+  assert.match(report, /No new buyer-intent asks today, from 30 candidates scanned\. 1 previously reported ask is still open\./);
 });

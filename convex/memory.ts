@@ -683,13 +683,21 @@ export const completeDemandCandidatePlan = mutation({
     insertedCount: v.number(),
     skippedCount: v.number(),
     dedupedCount: v.number(),
+    /** Permalinks actually stored by this call, so a report can show only what is new. */
+    insertedPermalinks: v.array(v.string()),
   }),
   handler: async (ctx, args) => {
     assertSecret(args.token);
     if (!Number.isFinite(args.completedAt)) throw new Error("Invalid demand completion time");
     const stored = await ctx.db.get(args.planId);
     if (!stored) {
-      return { status: "missing" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+      return {
+        status: "missing" as const,
+        insertedCount: 0,
+        skippedCount: 0,
+        dedupedCount: 0,
+        insertedPermalinks: [],
+      };
     }
     if (stored.status !== "pending") {
       return {
@@ -697,16 +705,23 @@ export const completeDemandCandidatePlan = mutation({
         insertedCount: 0,
         skippedCount: 0,
         dedupedCount: 0,
+        insertedPermalinks: [],
       };
     }
     if (stored.expiresAt <= Date.now()) {
       await ctx.db.patch(stored._id, { status: "expired" });
-      return { status: "expired" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+      return {
+        status: "expired" as const,
+        insertedCount: 0,
+        skippedCount: 0,
+        dedupedCount: 0,
+        insertedPermalinks: [],
+      };
     }
 
-    let insertedCount = 0;
     let skippedCount = 0;
     let dedupedCount = 0;
+    const insertedPermalinks: string[] = [];
     const seenPermalinks = new Set<string>();
     for (const ask of args.asks) {
       if (!validDemandAsk(ask)) {
@@ -727,10 +742,16 @@ export const completeDemandCandidatePlan = mutation({
         continue;
       }
       await ctx.db.insert("demandAsks", ask);
-      insertedCount += 1;
+      insertedPermalinks.push(ask.permalink);
     }
     await ctx.db.patch(stored._id, { status: "completed", completedAt: args.completedAt });
-    return { status: "completed" as const, insertedCount, skippedCount, dedupedCount };
+    return {
+      status: "completed" as const,
+      insertedCount: insertedPermalinks.length,
+      skippedCount,
+      dedupedCount,
+      insertedPermalinks,
+    };
   },
 });
 

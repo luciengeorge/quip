@@ -157,9 +157,61 @@ test("a stored demand plan is atomically completed once", async () => {
   });
 
   expect(loaded).toMatchObject({ status: "pending", plan: demandCandidatePlan() });
-  expect(first).toEqual({ status: "completed", insertedCount: 1, skippedCount: 0, dedupedCount: 0 });
-  expect(second).toEqual({ status: "already-completed", insertedCount: 0, skippedCount: 0, dedupedCount: 0 });
+  expect(first).toEqual({
+    status: "completed",
+    insertedCount: 1,
+    skippedCount: 0,
+    dedupedCount: 0,
+    insertedPermalinks: [demandAsk().permalink],
+  });
+  expect(second).toEqual({
+    status: "already-completed",
+    insertedCount: 0,
+    skippedCount: 0,
+    dedupedCount: 0,
+    insertedPermalinks: [],
+  });
   expect(asks).toHaveLength(1);
+  vi.unstubAllEnvs();
+});
+
+test("plan completion reports only the permalinks it actually stored", async () => {
+  // The daily report renders from this list. When it over-reports, an ask that stayed open is
+  // re-served as news every day, which is what happened on 2026-09-08.
+  vi.stubEnv("APP_SHARED_SECRET", token);
+  const t = convexTest(schema, modules);
+  const repeat = demandAsk();
+  const fresh = demandAsk({ permalink: "https://www.reddit.com/r/webdev/comments/fresh/" });
+
+  const firstPlan = await t.mutation(api.memory.storeDemandCandidatePlan, {
+    token,
+    plan: demandCandidatePlan(),
+    seal: "a".repeat(64),
+    expiresAt: Date.now() + 60_000,
+  });
+  await t.mutation(api.memory.completeDemandCandidatePlan, {
+    token,
+    planId: firstPlan,
+    asks: [repeat],
+    completedAt: Date.now(),
+  });
+
+  const secondPlan = await t.mutation(api.memory.storeDemandCandidatePlan, {
+    token,
+    plan: demandCandidatePlan(),
+    seal: "b".repeat(64),
+    expiresAt: Date.now() + 60_000,
+  });
+  const result = await t.mutation(api.memory.completeDemandCandidatePlan, {
+    token,
+    planId: secondPlan,
+    asks: [repeat, fresh],
+    completedAt: Date.now(),
+  });
+
+  expect(result.insertedPermalinks).toEqual([fresh.permalink]);
+  expect(result.insertedCount).toBe(1);
+  expect(result.dedupedCount).toBe(1);
   vi.unstubAllEnvs();
 });
 

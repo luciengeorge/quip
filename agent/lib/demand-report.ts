@@ -29,6 +29,8 @@ export interface DailyDemandReportInput {
   day: string;
   asks: readonly ReportableDemandAsk[];
   candidateCount: number;
+  /** Asks seen again today that were already reported on an earlier day. */
+  repeatCount?: number;
   generatedAt: number;
   /** Classifier and persistence drops, already worded by the runtime. */
   notes?: readonly string[];
@@ -78,15 +80,18 @@ export function renderDailyDemandReport(input: DailyDemandReportInput): string {
   const ranked = [...safe].sort((a, b) => b.score - a.score).slice(0, DAILY_DEMAND_REPORT_MAX_ASKS);
   const lines = [`# Quip buyer intent, ${input.day}`];
 
+  const repeats = input.repeatCount ?? 0;
+  const stillOpen = repeats > 0 ? ` ${repeats} previously reported ${repeats === 1 ? "ask is" : "asks are"} still open.` : "";
+
   if (ranked.length === 0) {
     // An explicit zero is the point. Posting nothing on a quiet day is indistinguishable from
     // the sweep never running, which is the exact ambiguity this report exists to remove.
     lines.push(
-      `No buyer-intent asks qualified today, from ${input.candidateCount} candidates scanned.`,
+      `No new buyer-intent asks today, from ${input.candidateCount} candidates scanned.${stillOpen}`,
     );
   } else {
     lines.push(
-      `${ranked.length} of ${safe.length} asks shown, from ${input.candidateCount} candidates scanned.`,
+      `${ranked.length} new ${ranked.length === 1 ? "ask" : "asks"}${ranked.length < safe.length ? ` of ${safe.length}` : ""}, from ${input.candidateCount} candidates scanned.${stillOpen}`,
       "Evidence only. These are not people to reply to.",
       "",
       ...ranked.map((ask) => demandAskLine(ask, input.generatedAt)),
