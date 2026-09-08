@@ -32,7 +32,11 @@ export function demandSweepHandoffMessage(prepared: PreparedDemandSweep): string
       CLASSIFIER_OUTPUT_SCHEMA +
       ". Do not call it for any candidate outside the sealed plan.",
     `3. Call complete_demand_sweep exactly once with planId ${prepared.planId} and the classifier's classifications.`,
-    "4. Post its returned `report` field exactly as given, and nothing else. Do not summarise it, reorder it, add to it, or comment on it.",
+    "4. Call assign_demand_themes once. Group every ask it returned in `newAsks` into a recurring want. Prefer an existing `themeKey` from `openThemes` whenever the want matches; open a `newLabel` only when none fits. A label names the want, not the post, for example \"LLM token spend visibility\", not \"someone asked about tokens\". An ask too vague to name a want gets its own label and will simply never recur.",
+    "5. For each and only each entry in the returned `themesNeedingResearch`, delegate exactly once to the demand_viability subagent. Give it the theme label and its quotes. Set outputSchema to an object with all of: incumbentCoverage (one of \"covers\", \"partial\", \"none\"), incumbents (array of {name, covers}), researchSummary (string), sources (array of {url, claim}), buildComponents (array of strings). Do not research a theme outside that list and do not retry.",
+    "6. Call record_theme_research once per researched theme with that themeKey and the subagent's output verbatim. The verdict is computed there, not by you.",
+    "7. Call build_demand_report once, with no arguments.",
+    "8. Post its returned `report` field exactly as given, and nothing else. Do not summarise it, reorder it, add to it, or comment on it.",
   ].join("\n");
 }
 

@@ -143,6 +143,39 @@ export interface DemandAskRecord {
   askedFor: string;
 }
 
+export interface StoredDemandTheme {
+  _id: string;
+  themeKey: string;
+  label: string;
+  permalinks: string[];
+  askers: string[];
+  firstSeenAt: number;
+  lastSeenAt: number;
+  researchedAt?: number;
+  researchedAskerCount?: number;
+  incumbentCoverage?: "covers" | "partial" | "none";
+  incumbents?: { name: string; covers: string }[];
+  researchSummary?: string;
+  sources?: { url: string; claim: string }[];
+  buildDays?: number;
+  buildBreakdown?: string;
+  verdict?: "worth-a-look" | "already-solved" | "unresearchable";
+  verdictAt?: number;
+}
+
+export interface StoredThemeResearch {
+  themeKey: string;
+  researchedAt: number;
+  researchedAskerCount: number;
+  incumbentCoverage: "covers" | "partial" | "none";
+  incumbents: { name: string; covers: string }[];
+  researchSummary: string;
+  sources: { url: string; claim: string }[];
+  buildDays: number;
+  buildBreakdown: string;
+  verdict: "worth-a-look" | "already-solved" | "unresearchable";
+}
+
 export interface DemandAskUpsertResult {
   insertedCount: number;
   skippedCount: number;
@@ -318,6 +351,24 @@ export class Memory {
 
   demandScansInRange(startDay: string, endDay: string): Promise<DemandScanRecord[]> {
     return this.query("demandScansInRange", { startDay, endDay }) as Promise<DemandScanRecord[]>;
+  }
+
+  openDemandThemes(since: number): Promise<StoredDemandTheme[]> {
+    return this.query("openDemandThemes", { since }) as Promise<StoredDemandTheme[]>;
+  }
+
+  applyDemandThemeAssignments(input: {
+    at: number;
+    assignments: { themeKey: string; label: string; permalink: string; author: string }[];
+  }): Promise<{ createdCount: number; updatedCount: number }> {
+    return this.mutation("applyDemandThemeAssignments", input) as Promise<{
+      createdCount: number;
+      updatedCount: number;
+    }>;
+  }
+
+  recordDemandThemeResearch(input: StoredThemeResearch): Promise<"recorded" | "missing"> {
+    return this.mutation("recordDemandThemeResearch", input) as Promise<"recorded" | "missing">;
   }
 }
 
