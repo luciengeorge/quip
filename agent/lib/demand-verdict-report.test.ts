@@ -155,3 +155,11 @@ test("a long incumbent list is capped with a count of the rest", () => {
   assert.match(report, /Incumbents: Product 0 \(does the thing\); Product 1 \(does the thing\); Product 2 \(does the thing\), and 5 more\./);
   assert.doesNotMatch(report, /Product 7/);
 });
+
+test("a zero-day estimate is treated as no estimate", () => {
+  // The cheapest real build is the base app shell at one day, so zero can only mean unpriceable.
+  // Stored rows already carried a zero, so the renderer has to reject the value, not just absence.
+  const report = render({ themes: [judged({ buildDays: 0, buildBreakdown: "unrecognised components" })] });
+  assert.doesNotMatch(report, /Build:/);
+  assert.doesNotMatch(report, /unrecognised/);
+});

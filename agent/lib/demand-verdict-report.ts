@@ -77,9 +77,12 @@ function verdictBlock(theme: DemandThemeRecord, generatedAt: number): string[] {
   }
 
   // A build estimate for something that already exists is noise: the decision is already made.
-  // An absent estimate prints nothing at all, because "~0 days" reads as trivial when it means
-  // the component list could not be priced.
-  if (theme.buildDays !== undefined && theme.verdict !== "already-solved") {
+  //
+  // Zero is rejected as well as absent. The cheapest possible build is the base app shell at one
+  // day, so a zero can only mean the component list could not be priced, and "~0 days" reads as
+  // trivial to build. Guarding on the value rather than on a sentinel string also covers rows
+  // written before that was fixed at the source, which is how this reached a live report.
+  if (theme.buildDays !== undefined && theme.buildDays > 0 && theme.verdict !== "already-solved") {
     lines.push(`Build: ~${theme.buildDays} ${theme.buildDays === 1 ? "day" : "days"}${theme.buildBreakdown ? ` (${theme.buildBreakdown})` : ""}.`);
   }
   for (const source of (theme.sources ?? []).slice(0, 3)) lines.push(`  ${source.url}`);
