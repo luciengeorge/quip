@@ -689,9 +689,13 @@ test("the report lists only asks this run stored, and counts the rest as still o
     now: () => now,
   });
 
-  const bullets = result.report.split("\n").filter((line) => line.startsWith("- ") && line.includes("http"));
-  assert.equal(bullets.length, 1);
-  assert.match(result.report, /1 new ask/);
-  assert.match(result.report, /1 previously reported ask is still open/);
-  assert.equal(result.report.includes(repeat.url), false);
+  // Only the stored ask may reach the theme pass. Grouping an ask already filed under a theme
+  // would inflate the recurrence count, and that count is the whole basis for a verdict.
+  assert.equal(result.newAsks.length, 1);
+  assert.equal(result.newAsks[0]?.permalink, fresh.url);
+  assert.equal(
+    result.newAsks.some((ask) => ask.permalink === repeat.url),
+    false,
+  );
+  assert.equal(result.asks.length, 2);
 });

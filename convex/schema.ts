@@ -148,6 +148,40 @@ export default defineSchema({
     xSourceStatus: trendXSourceStatus,
   }).index("by_day", ["day"]),
 
+  /**
+   * A recurring want, assembled from asks that describe the same thing.
+   *
+   * A single post with no replies is close to zero evidence, so viability is judged on the theme
+   * rather than the ask: the same want, from different people, over time. Research is cached here
+   * per theme so a repeat theme costs nothing to re-judge.
+   */
+  demandThemes: defineTable({
+    themeKey: v.string(),
+    label: v.string(),
+    permalinks: v.array(v.string()),
+    /** Distinct ask authors. Counted, never shown: the report is evidence, not a contact list. */
+    askers: v.array(v.string()),
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+    // Everything below is filled once a theme clears the bar and gets researched.
+    researchedAt: v.optional(v.number()),
+    researchedAskerCount: v.optional(v.number()),
+    incumbentCoverage: v.optional(
+      v.union(v.literal("covers"), v.literal("partial"), v.literal("none")),
+    ),
+    incumbents: v.optional(v.array(v.object({ name: v.string(), covers: v.string() }))),
+    researchSummary: v.optional(v.string()),
+    sources: v.optional(v.array(v.object({ url: v.string(), claim: v.string() }))),
+    buildDays: v.optional(v.number()),
+    buildBreakdown: v.optional(v.string()),
+    verdict: v.optional(
+      v.union(v.literal("worth-a-look"), v.literal("already-solved"), v.literal("unresearchable")),
+    ),
+    verdictAt: v.optional(v.number()),
+  })
+    .index("by_themeKey", ["themeKey"])
+    .index("by_lastSeenAt", ["lastSeenAt"]),
+
   demandAsks: defineTable({
     topicHash: v.string(),
     day: v.string(),

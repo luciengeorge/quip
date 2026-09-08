@@ -819,3 +819,114 @@ export const demandScansInRange = query({
       .take(31);
   },
 });
+
+const themeIncumbentCoverage = v.union(
+  v.literal("covers"),
+  v.literal("partial"),
+  v.literal("none"),
+);
+const themeVerdict = v.union(
+  v.literal("worth-a-look"),
+  v.literal("already-solved"),
+  v.literal("unresearchable"),
+);
+
+/** Themes seen within the window, which are the only ones a new ask may be grouped into. */
+export const openDemandThemes = query({
+  args: { token: v.string(), since: v.number() },
+  returns: v.array(schema.doc("demandThemes")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (!Number.isFinite(args.since)) throw new Error("Invalid theme window");
+    return await ctx.db
+      .query("demandThemes")
+      .withIndex("by_lastSeenAt", (q) => q.gte("lastSeenAt", args.since))
+      .take(500);
+  },
+});
+
+/**
+ * Attach asks to themes, creating a theme when its key is new.
+ *
+ * Permalinks and askers are stored as sets. Re-running a day must not inflate the recurrence
+ * count, because that count is the whole basis for a verdict.
+ */
+export const applyDemandThemeAssignments = mutation({
+  args: {
+    token: v.string(),
+    at: v.number(),
+    assignments: v.array(
+      v.object({
+        themeKey: v.string(),
+        label: v.string(),
+        permalink: v.string(),
+        author: v.string(),
+      }),
+    ),
+  },
+  returns: v.object({ createdCount: v.number(), updatedCount: v.number() }),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (!Number.isFinite(args.at)) throw new Error("Invalid assignment time");
+    let createdCount = 0;
+    let updatedCount = 0;
+    for (const assignment of args.assignments) {
+      if (assignment.themeKey.trim().length === 0) continue;
+      const existing = await ctx.db
+        .query("demandThemes")
+        .withIndex("by_themeKey", (q) => q.eq("themeKey", assignment.themeKey))
+        .unique();
+      if (!existing) {
+        await ctx.db.insert("demandThemes", {
+          themeKey: assignment.themeKey,
+          label: assignment.label,
+          permalinks: [assignment.permalink],
+          askers: [assignment.author],
+          firstSeenAt: args.at,
+          lastSeenAt: args.at,
+        });
+        createdCount += 1;
+        continue;
+      }
+      const permalinks = existing.permalinks.includes(assignment.permalink)
+        ? existing.permalinks
+        : [...existing.permalinks, assignment.permalink];
+      const askers = existing.askers.includes(assignment.author)
+        ? existing.askers
+        : [...existing.askers, assignment.author];
+      await ctx.db.patch(existing._id, { permalinks, askers, lastSeenAt: args.at });
+      updatedCount += 1;
+    }
+    return { createdCount, updatedCount };
+  },
+});
+
+/** Cache one theme's incumbent check and the verdict computed from it. */
+export const recordDemandThemeResearch = mutation({
+  args: {
+    token: v.string(),
+    themeKey: v.string(),
+    researchedAt: v.number(),
+    researchedAskerCount: v.number(),
+    incumbentCoverage: themeIncumbentCoverage,
+    incumbents: v.array(v.object({ name: v.string(), covers: v.string() })),
+    researchSummary: v.string(),
+    sources: v.array(v.object({ url: v.string(), claim: v.string() })),
+    buildDays: v.number(),
+    buildBreakdown: v.string(),
+    verdict: themeVerdict,
+  },
+  returns: v.union(v.literal("recorded"), v.literal("missing")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    if (!Number.isFinite(args.researchedAt)) throw new Error("Invalid research time");
+    const { token, themeKey, ...fields } = args;
+    const existing = await ctx.db
+      .query("demandThemes")
+      .withIndex("by_themeKey", (q) => q.eq("themeKey", themeKey))
+      .unique();
+    if (!existing) return "missing" as const;
+    await ctx.db.patch(existing._id, { ...fields, verdictAt: args.researchedAt });
+    return "recorded" as const;
+  },
+});

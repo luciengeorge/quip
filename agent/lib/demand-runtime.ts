@@ -4,6 +4,16 @@ import { gatherSources, type CandidateSource } from "./candidates.ts";
 import { demandClassificationCap } from "./config.ts";
 import { renderDailyDemandReport, renderDemandSweepNotice } from "./demand-report.ts";
 import {
+  DEMAND_THEME_WINDOW_DAYS,
+  distinctAskerCount,
+  isIncumbentCoverage,
+  themesNeedingResearch,
+  validateThemeAssignments,
+  verdictFor,
+} from "./demand-themes.ts";
+import { renderDemandVerdictReport } from "./demand-verdict-report.ts";
+import { calculateBuildEstimate } from "./build-cost.ts";
+import {
   classifyDemandCandidates,
   planDemandCandidates,
   type DemandAsk,
@@ -13,8 +23,11 @@ import {
 import { leakGuardConfigFromEnv } from "./leak-guard.ts";
 import {
   memoryFromEnv,
+  type DemandAskRecord,
   type DemandCandidatePlanCompletion,
   type DemandCandidatePlanRecord,
+  type StoredDemandTheme,
+  type StoredThemeResearch,
 } from "./memory.ts";
 import { RedditDemandSource, redditDemandSourceFromEnv } from "./reddit.ts";
 import {
@@ -44,6 +57,18 @@ export interface DemandAskUpsertResult {
   dedupedCount: number;
   /** Permalinks stored by this call. A repeat ask is evidence, but it is not news. */
   insertedPermalinks: string[];
+}
+
+/** Everything the theme pass reads and writes, so tests can supply it without a network. */
+export interface DemandThemeMemory {
+  demandAsksInRange(startDay: string, endDay: string): Promise<DemandAskRecord[]>;
+  demandScansInRange(startDay: string, endDay: string): Promise<{ candidateCount: number }[]>;
+  openDemandThemes(since: number): Promise<StoredDemandTheme[]>;
+  applyDemandThemeAssignments(input: {
+    at: number;
+    assignments: { themeKey: string; label: string; permalink: string; author: string }[];
+  }): Promise<{ createdCount: number; updatedCount: number }>;
+  recordDemandThemeResearch(input: StoredThemeResearch): Promise<"recorded" | "missing">;
 }
 
 export interface DemandScanMemory {
@@ -94,15 +119,14 @@ export interface CompletedDemandSweep {
   classification: DemandClassificationResult;
   messages: string[];
   persistence: DemandAskUpsertResult | null;
-  /**
-   * The exact text to post. Rendered here rather than described to the model, because a report
-   * assembled from model-generated text is a report that can be wrong about its own evidence.
-   */
-  report: string;
+  /** Asks stored by this run, which are the only ones the theme pass may group. */
+  newAsks: { permalink: string; quote: string; askedFor: string }[];
+  /** Themes still inside the window, so a recurring want joins its theme instead of forking one. */
+  openThemes: { themeKey: string; label: string }[];
 }
 
-/** What the sealed-result path establishes, before the report is rendered from it. */
-type CompletedDemandSweepOutcome = Omit<CompletedDemandSweep, "report"> & {
+/** What the sealed-result path establishes, before themes and the report are derived from it. */
+type CompletedDemandSweepOutcome = Omit<CompletedDemandSweep, "newAsks" | "openThemes"> & {
   /** Null when no verified plan was in scope, so no day can be trusted. */
   day: string | null;
   candidateCount: number;
@@ -468,36 +492,36 @@ export async function completeDemandSweep(options: {
   secret: string;
   now?: () => number;
   env?: Env;
+  themeMemory?: Pick<DemandThemeMemory, "openDemandThemes">;
 }): Promise<CompletedDemandSweep> {
   const now = options.now ?? Date.now;
   const outcome = await completeDemandSweepOutcome(options);
-  const generatedAt = now();
-  // Report only what was stored on this run. Persistence deduped by permalink while the report
-  // rendered everything classified, so an ask that stayed open for days was re-served every day:
-  // four of the eight asks reported on 2026-09-08 were the same posts reported on 09-07. A
-  // still-open ask is still evidence, but it is not news, and repeating it buries what is new.
+  // Hand on only what this run stored. Persistence dedupes by permalink while classification
+  // returns everything seen, so grouping the full set would re-file asks already in a theme and
+  // inflate the recurrence count that decides a verdict.
   const stored = new Set(outcome.persistence?.insertedPermalinks ?? []);
-  const newAsks = outcome.asks.filter((ask) => stored.has(ask.permalink));
-  const report =
-    outcome.day === null
-      ? renderDemandSweepNotice(
-          utcDay(generatedAt),
-          outcome.messages[0] ?? "the stored candidate plan could not be used",
-        )
-      : renderDailyDemandReport({
-          day: outcome.day,
-          asks: newAsks,
-          candidateCount: outcome.candidateCount,
-          repeatCount: outcome.asks.length - newAsks.length,
-          generatedAt,
-          notes: outcome.messages,
-        });
+  const newAsks = outcome.asks
+    .filter((ask) => stored.has(ask.permalink))
+    .map((ask) => ({ permalink: ask.permalink, quote: ask.quote, askedFor: ask.askedFor }));
+
+  let openThemes: { themeKey: string; label: string }[] = [];
+  if (newAsks.length > 0) {
+    try {
+      const themeMemory = options.themeMemory ?? memoryFromEnv();
+      const themes = await themeMemory.openDemandThemes(themeWindowStart(now()));
+      openThemes = themes.map((theme) => ({ themeKey: theme.themeKey, label: theme.label }));
+    } catch (error) {
+      console.warn("[demand-sweep] open themes unavailable; new labels only:", error);
+    }
+  }
+
   return {
     asks: outcome.asks,
     classification: outcome.classification,
     messages: outcome.messages,
     persistence: outcome.persistence,
-    report,
+    newAsks,
+    openThemes,
   };
 }
 
@@ -512,3 +536,146 @@ function emptyDemandClassification(): DemandClassificationResult {
 }
 
 export { RedditDemandSource, StackExchangeDemandSource, XDemandSource };
+
+/**
+ * Theme assignment, research, and reporting.
+ *
+ * The model chooses only the grouping and reports what it found. Every value that reaches the
+ * report comes from stored rows, and the verdict is a rule applied in code, so a persuasive
+ * research summary cannot change an outcome and a misgrouped ask cannot invent evidence.
+ */
+
+function themeWindowStart(now: number): number {
+  return now - DEMAND_THEME_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+}
+
+function askWindowDays(now: number): { startDay: string; endDay: string } {
+  return { startDay: utcDay(themeWindowStart(now)), endDay: utcDay(now) };
+}
+
+export interface ThemeAssignmentResult {
+  assignedCount: number;
+  createdCount: number;
+  messages: string[];
+  themesNeedingResearch: {
+    themeKey: string;
+    label: string;
+    askerCount: number;
+    quotes: string[];
+  }[];
+}
+
+export async function applyDemandThemeAssignments(
+  raw: readonly unknown[],
+  options: { memory?: DemandThemeMemory; now?: () => number } = {},
+): Promise<ThemeAssignmentResult> {
+  const now = (options.now ?? Date.now)();
+  const memory = options.memory ?? memoryFromEnv();
+  const today = utcDay(now);
+  const todaysAsks = await memory.demandAsksInRange(today, today);
+  const openThemes = await memory.openDemandThemes(themeWindowStart(now));
+
+  const validation = validateThemeAssignments(
+    raw,
+    todaysAsks.map((ask) => ask.permalink),
+    openThemes,
+  );
+  const authorByPermalink = new Map(todaysAsks.map((ask) => [ask.permalink, ask.author]));
+  const applied = await memory.applyDemandThemeAssignments({
+    at: now,
+    assignments: validation.assignments.map((assignment) => ({
+      themeKey: assignment.themeKey,
+      label: assignment.label,
+      permalink: assignment.permalink,
+      author: authorByPermalink.get(assignment.permalink) ?? "",
+    })),
+  });
+
+  // Re-read rather than reasoning about what the write did: the recurrence count decides whether
+  // a research call is spent, and it must come from the stored set, not from a local guess.
+  const refreshed = await memory.openDemandThemes(themeWindowStart(now));
+  const quoteByPermalink = new Map(todaysAsks.map((ask) => [ask.permalink, ask.quote]));
+  const needing = themesNeedingResearch(refreshed, now).map((theme) => ({
+    themeKey: theme.themeKey,
+    label: theme.label,
+    askerCount: distinctAskerCount(theme),
+    quotes: theme.permalinks
+      .map((permalink) => quoteByPermalink.get(permalink))
+      .filter((quote): quote is string => typeof quote === "string")
+      .slice(0, 5),
+  }));
+
+  return {
+    assignedCount: validation.assignments.length,
+    createdCount: applied.createdCount,
+    messages: validation.messages,
+    themesNeedingResearch: needing,
+  };
+}
+
+export async function recordThemeResearch(
+  input: {
+    themeKey: string;
+    incumbentCoverage: string;
+    incumbents: { name: string; covers: string }[];
+    researchSummary: string;
+    sources: { url: string; claim: string }[];
+    buildComponents: string[];
+  },
+  options: { memory?: DemandThemeMemory; now?: () => number } = {},
+): Promise<{ status: string; verdict?: string; buildDays?: number }> {
+  const now = (options.now ?? Date.now)();
+  const memory = options.memory ?? memoryFromEnv();
+  if (!isIncumbentCoverage(input.incumbentCoverage)) {
+    return { status: "rejected-coverage" };
+  }
+  const themes = await memory.openDemandThemes(themeWindowStart(now));
+  const theme = themes.find((candidate) => candidate.themeKey === input.themeKey);
+  if (!theme) return { status: "unknown-theme" };
+
+  const estimate = calculateBuildEstimate(input.buildComponents);
+  const verdict = verdictFor(input.incumbentCoverage);
+  const status = await memory.recordDemandThemeResearch({
+    themeKey: input.themeKey,
+    researchedAt: now,
+    researchedAskerCount: distinctAskerCount(theme),
+    incumbentCoverage: input.incumbentCoverage,
+    incumbents: input.incumbents,
+    researchSummary: input.researchSummary,
+    sources: input.sources,
+    buildDays: estimate.ok ? estimate.buildDays : 0,
+    buildBreakdown: estimate.ok ? estimate.breakdown : "unrecognised components",
+    verdict,
+  });
+  return {
+    status,
+    verdict,
+    buildDays: estimate.ok ? estimate.buildDays : 0,
+  };
+}
+
+export async function buildDemandReport(
+  options: { memory?: DemandThemeMemory; now?: () => number } = {},
+): Promise<{ report: string }> {
+  const now = (options.now ?? Date.now)();
+  const memory = options.memory ?? memoryFromEnv();
+  const today = utcDay(now);
+  const { startDay, endDay } = askWindowDays(now);
+  const [todaysAsks, windowAsks, themes, scans] = await Promise.all([
+    memory.demandAsksInRange(today, today),
+    memory.demandAsksInRange(startDay, endDay),
+    memory.openDemandThemes(themeWindowStart(now)),
+    memory.demandScansInRange(today, today),
+  ]);
+  const candidateCount = scans.reduce((total, scan) => total + scan.candidateCount, 0);
+  return {
+    report: renderDemandVerdictReport({
+      day: today,
+      themes,
+      newAsks: todaysAsks,
+      candidateCount,
+      windowAskCount: windowAsks.length,
+      generatedAt: now,
+    }),
+  };
+}
