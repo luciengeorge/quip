@@ -640,7 +640,7 @@ export async function recordThemeResearch(
     buildComponents: string[];
   },
   options: { memory?: DemandThemeMemory; now?: () => number } = {},
-): Promise<{ status: string; verdict?: string; buildDays?: number }> {
+): Promise<{ status: string; verdict?: string; buildDays?: number; buildEstimate?: string }> {
   const now = (options.now ?? Date.now)();
   const memory = options.memory ?? memoryFromEnv();
   if (!isIncumbentCoverage(input.incumbentCoverage)) {
@@ -652,6 +652,8 @@ export async function recordThemeResearch(
 
   const estimate = calculateBuildEstimate(input.buildComponents);
   const verdict = verdictFor(input.incumbentCoverage);
+  // An unrecognised component list yields no estimate, and no estimate must not be reported as
+  // "~0 days". A zero there reads as "trivial to build" when it means "we could not tell".
   const status = await memory.recordDemandThemeResearch({
     themeKey: input.themeKey,
     researchedAt: now,
@@ -660,14 +662,13 @@ export async function recordThemeResearch(
     incumbents: input.incumbents,
     researchSummary: input.researchSummary,
     sources: input.sources,
-    buildDays: estimate.ok ? estimate.buildDays : 0,
-    buildBreakdown: estimate.ok ? estimate.breakdown : "unrecognised components",
+    ...(estimate.ok ? { buildDays: estimate.buildDays, buildBreakdown: estimate.breakdown } : {}),
     verdict,
   });
   return {
     status,
     verdict,
-    buildDays: estimate.ok ? estimate.buildDays : 0,
+    ...(estimate.ok ? { buildDays: estimate.buildDays } : { buildEstimate: estimate.reason }),
   };
 }
 

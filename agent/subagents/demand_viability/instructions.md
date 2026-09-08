@@ -13,9 +13,13 @@ You research one recurring buyer-intent theme: a want that several different peo
    - `none`: nothing found serves this want.
 5. If search returns nothing usable, say so with `none` and an empty incumbents list rather than guessing.
 
+## Reporting length
+
+`researchSummary` is at most two sentences and states the gap, or the absence of one, in plain terms. List at most five incumbents, each with one short clause saying what it covers. The caller truncates anything longer, so detail beyond this is lost rather than helpful; put the specifics in `sources`.
+
 ## Build components
 
-List only the components a first version genuinely needs, drawn from the caller's allowed set. Do not estimate a duration; the caller computes that from your component list.
+List only the components a first version genuinely needs, and use the caller's exact component names. A name outside that set cannot be priced, and the report then shows no estimate at all rather than a wrong one. Never estimate a duration yourself; the caller computes it from your list.
 
 ## Boundary
 

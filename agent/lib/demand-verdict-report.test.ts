@@ -3,7 +3,10 @@ import test from "node:test";
 
 import type { ReportableDemandAsk } from "../lib/demand-report.ts";
 import type { DemandThemeRecord } from "../lib/demand-themes.ts";
-import { renderDemandVerdictReport } from "../lib/demand-verdict-report.ts";
+import {
+  renderDemandVerdictReport,
+  VERDICT_MAX_SUMMARY_CHARS,
+} from "../lib/demand-verdict-report.ts";
 import { fakeApiKey } from "../lib/test-secrets.ts";
 
 const generatedAt = Date.parse("2026-09-08T08:35:00Z");
@@ -128,4 +131,27 @@ test("an already-solved theme omits the build estimate", () => {
   });
   assert.doesNotMatch(report, /Build: ~/);
   assert.match(report, /ALREADY SOLVED/);
+});
+
+test("an unpriceable component list shows no estimate rather than zero days", () => {
+  // "~0 days" reads as trivial to build when it actually means the components could not be priced.
+  const report = render({ themes: [judged({ buildDays: undefined, buildBreakdown: undefined })] });
+  assert.doesNotMatch(report, /Build:/);
+  assert.match(report, /WORTH A LOOK/);
+});
+
+test("a long research summary is clipped on a word boundary", () => {
+  const long = `${"Existing tools meter API keys rather than subscription seats. ".repeat(12)}`;
+  const report = render({ themes: [judged({ researchSummary: long })] });
+  const line = report.split("\n").find((l) => l.startsWith("Existing tools")) ?? "";
+  assert.ok(line.length <= VERDICT_MAX_SUMMARY_CHARS + 4, `summary line was ${line.length}`);
+  assert.match(line, /\.\.\.$/);
+  assert.doesNotMatch(line, / \.\.\.$/);
+});
+
+test("a long incumbent list is capped with a count of the rest", () => {
+  const many = Array.from({ length: 8 }, (_v, i) => ({ name: `Product ${i}`, covers: "does the thing" }));
+  const report = render({ themes: [judged({ incumbents: many })] });
+  assert.match(report, /Incumbents: Product 0 \(does the thing\); Product 1 \(does the thing\); Product 2 \(does the thing\), and 5 more\./);
+  assert.doesNotMatch(report, /Product 7/);
 });
