@@ -42,6 +42,8 @@ export interface DemandAskUpsertResult {
   insertedCount: number;
   skippedCount: number;
   dedupedCount: number;
+  /** Permalinks stored by this call. A repeat ask is evidence, but it is not news. */
+  insertedPermalinks: string[];
 }
 
 export interface DemandScanMemory {
@@ -470,6 +472,12 @@ export async function completeDemandSweep(options: {
   const now = options.now ?? Date.now;
   const outcome = await completeDemandSweepOutcome(options);
   const generatedAt = now();
+  // Report only what was stored on this run. Persistence deduped by permalink while the report
+  // rendered everything classified, so an ask that stayed open for days was re-served every day:
+  // four of the eight asks reported on 2026-09-08 were the same posts reported on 09-07. A
+  // still-open ask is still evidence, but it is not news, and repeating it buries what is new.
+  const stored = new Set(outcome.persistence?.insertedPermalinks ?? []);
+  const newAsks = outcome.asks.filter((ask) => stored.has(ask.permalink));
   const report =
     outcome.day === null
       ? renderDemandSweepNotice(
@@ -478,8 +486,9 @@ export async function completeDemandSweep(options: {
         )
       : renderDailyDemandReport({
           day: outcome.day,
-          asks: outcome.asks,
+          asks: newAsks,
           candidateCount: outcome.candidateCount,
+          repeatCount: outcome.asks.length - newAsks.length,
           generatedAt,
           notes: outcome.messages,
         });

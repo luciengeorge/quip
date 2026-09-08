@@ -81,18 +81,32 @@ function memory() {
         completedAt: number;
       }) {
         const plan = plans.get(input.planId);
-        if (!plan) return { status: "missing" as const, insertedCount: 0, skippedCount: 0, dedupedCount: 0 };
+        if (!plan)
+          return {
+            status: "missing" as const,
+            insertedCount: 0,
+            skippedCount: 0,
+            dedupedCount: 0,
+            insertedPermalinks: [],
+          };
         if (plan.status !== "pending") {
           return {
             status: plan.status === "expired" ? "expired" as const : "already-completed" as const,
             insertedCount: 0,
             skippedCount: 0,
             dedupedCount: 0,
+            insertedPermalinks: [],
           };
         }
         stored.push(...input.asks);
         plan.status = "completed";
-        return { status: "completed" as const, insertedCount: input.asks.length, skippedCount: 0, dedupedCount: 0 };
+        return {
+          status: "completed" as const,
+          insertedCount: input.asks.length,
+          skippedCount: 0,
+          dedupedCount: 0,
+          insertedPermalinks: input.asks.map((ask) => ask.permalink),
+        };
       },
     },
     scans,
@@ -605,4 +619,79 @@ test("leaky classifier text never reaches demand storage", async () => {
   assert.deepEqual(result.asks, []);
   assert.deepEqual(store.stored, []);
   assert.match(result.messages[0] ?? "", /leak guard/);
+});
+
+test("the report lists only asks this run stored, and counts the rest as still open", async () => {
+  // Mutation testing caught that the renderer tests alone never exercised this wiring: reverting
+  // the filter left every test green. The defect it guards is real, an ask that stayed open was
+  // re-served every day, so the assertion has to run through completeDemandSweep itself.
+  const store = memory();
+  const fresh = candidate();
+  const repeatTitle = "Is there a tool that renders architecture diagrams from code?";
+  const repeat = {
+    ...candidate(),
+    url: "https://www.reddit.com/r/webdev/comments/repeat/",
+    title: repeatTitle,
+    context: repeatTitle,
+    sourceText: repeatTitle,
+    author: "buyer_two",
+  };
+  const sourceSet = {
+    sources: [
+      {
+        async gather() {
+          return { candidates: [fresh, repeat], messages: [] };
+        },
+      },
+    ],
+    initialMessages: [],
+    redditSourceConfigured: true as const,
+    stackExchangeSourceConfigured: false as const,
+    xSourceConfigured: false as const,
+    classificationCap: 30,
+  };
+  const prepared = await prepareDemandSweep({ sourceSet, memory: store.client, secret, now: () => now });
+  assert.equal(prepared.plan.candidates.length, 2);
+
+  // Persistence accepts only the first: the second permalink already exists from an earlier day.
+  const partiallyStoringMemory = {
+    loadDemandCandidatePlan: store.client.loadDemandCandidatePlan,
+    async completeDemandCandidatePlan(input: {
+      planId: string;
+      asks: DemandAsk[];
+      completedAt: number;
+    }) {
+      const result = await store.client.completeDemandCandidatePlan(input);
+      const firstPermalink = input.asks[0]?.permalink;
+      return {
+        ...result,
+        insertedCount: 1,
+        dedupedCount: input.asks.length - 1,
+        insertedPermalinks: firstPermalink ? [firstPermalink] : [],
+      };
+    },
+  };
+
+  const result = await completeDemandSweep({
+    planId: prepared.planId ?? "",
+    classifications: prepared.plan.candidates.map((item) => ({
+      buyerAsk: true,
+      author: item.author,
+      askedAt: item.timestamp,
+      quote: item.title,
+      replyCount: item.replyCount,
+      permalink: item.url,
+      subreddit: item.subreddit,
+      askedFor: "deployment preview tooling for small teams",
+    })),
+    memory: partiallyStoringMemory,
+    secret,
+    now: () => now,
+  });
+
+  const bullets = result.report.split("\n").filter((line) => line.startsWith("- ") && line.includes("http"));
+  assert.equal(bullets.length, 1);
+  assert.match(result.report, /1 new ask/);
+  assert.match(result.report, /1 previously reported ask is still open/);
+  assert.equal(result.report.includes(repeat.url), false);
 });
