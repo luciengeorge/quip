@@ -4,6 +4,14 @@ import { gatherSources, type CandidateSource } from "./candidates.ts";
 import { demandClassificationCap } from "./config.ts";
 import { classifyDemandWithJev } from "./demand-jev.ts";
 import { researchIncumbentsWithJev, searchIncumbents } from "./incumbent-jev.ts";
+import {
+  auditDue,
+  auditSample,
+  scoreAudit,
+  scoreThemeLabel,
+  summariseLabelQuality,
+  type AuditResult,
+} from "./quip-eval.ts";
 import { renderDailyDemandReport, renderDemandSweepNotice } from "./demand-report.ts";
 import { jevFromEnv, type JevClient } from "./jev.ts";
 import {
@@ -15,7 +23,7 @@ import {
   validateThemeAssignments,
   verdictFor,
 } from "./demand-themes.ts";
-import { renderDemandVerdictReport } from "./demand-verdict-report.ts";
+import { renderDemandVerdictReport, type AuditSummary } from "./demand-verdict-report.ts";
 import { calculateBuildEstimate } from "./build-cost.ts";
 import {
   classifyDemandCandidates,
@@ -30,6 +38,7 @@ import {
   type DemandAskRecord,
   type DemandCandidatePlanCompletion,
   type DemandCandidatePlanRecord,
+  type StoredDemandAudit,
   type StoredDemandTheme,
   type StoredThemeResearch,
 } from "./memory.ts";
@@ -66,6 +75,13 @@ export interface DemandAskUpsertResult {
 /** Everything the theme pass reads and writes, so tests can supply it without a network. */
 export interface DemandThemeMemory {
   demandAsksInRange(startDay: string, endDay: string): Promise<DemandAskRecord[]>;
+  latestDemandAudit(): Promise<StoredDemandAudit | null>;
+  recordThemeLabelQuality(input: {
+    themeKey: string;
+    labelQuality: number;
+    labelQualityAt: number;
+    labelQualityModel: string;
+  }): Promise<"recorded" | "missing">;
   demandScansInRange(startDay: string, endDay: string): Promise<{ candidateCount: number }[]>;
   openDemandThemes(since: number): Promise<StoredDemandTheme[]>;
   applyDemandThemeAssignments(input: {
@@ -684,6 +700,36 @@ export async function applyDemandThemeAssignments(
       .slice(0, 5),
   }));
 
+  // Label quality, inline. The label was written by a language model a moment ago, so Jev scoring
+  // it is a genuine second opinion; the rule against self-grading is why classification is audited
+  // elsewhere, by the model, instead of here.
+  const labelJev = options.jev ?? jevFromEnv(options.env);
+  if (labelJev) {
+    const quoteByPermalink = new Map(windowAsks.map((ask) => [ask.permalink, ask.quote]));
+    const newlyLabelled = refreshed.filter(
+      (theme) => theme.labelQuality === undefined && validation.assignments.some((a) => a.themeKey === theme.themeKey),
+    );
+    await Promise.all(
+      newlyLabelled.map(async (theme) => {
+        const quotes = theme.permalinks
+          .map((permalink) => quoteByPermalink.get(permalink))
+          .filter((quote): quote is string => typeof quote === "string");
+        const quality = await scoreThemeLabel(labelJev, { label: theme.label, quotes });
+        if (!quality) return;
+        try {
+          await memory.recordThemeLabelQuality({
+            themeKey: theme.themeKey,
+            labelQuality: quality.score,
+            labelQualityAt: now,
+            labelQualityModel: quality.model,
+          });
+        } catch (err) {
+          console.warn(`[jev] could not record label quality for ${theme.themeKey}:`, err);
+        }
+      }),
+    );
+  }
+
   // Incumbent research, inline. Every question here is a judgement over two short texts, which is
   // what Jev is for, and the summary is assembled from the answers rather than written, so the
   // truncated prose and unpriceable component lists the subagent produced cannot recur. When Jev
@@ -781,6 +827,19 @@ export async function buildDemandReport(
     memory.demandScansInRange(today, today),
   ]);
   const candidateCount = scans.reduce((total, scan) => total + scan.candidateCount, 0);
+  let audit: AuditSummary | null = null;
+  try {
+    const latest = await memory.latestDemandAudit();
+    if (latest)
+      audit = {
+        agreed: latest.agreed,
+        sampled: latest.sampled,
+        agreementRate: latest.agreementRate,
+        auditedAt: latest.auditedAt,
+      };
+  } catch (err) {
+    console.warn("[eval] latest audit unavailable (non-fatal):", err);
+  }
   return {
     report: renderDemandVerdictReport({
       day: today,
@@ -789,6 +848,66 @@ export async function buildDemandReport(
       candidateCount,
       windowAskCount: windowAsks.length,
       generatedAt: now,
+      labelQuality: summariseLabelQuality(themes),
+      audit,
     }),
   };
+}
+
+
+/**
+ * The audit half of quip's eval: the LANGUAGE MODEL re-deciding what Jev classified.
+ *
+ * Kept deliberately away from every other Jev path in this file. Jev classifies buyer asks, so
+ * Jev cannot be the judge of whether they are buyer asks: a grader marking its own work always
+ * looks excellent and tells you nothing. The auditor has to be a different model, which is the
+ * one job the language-model classifier still has now that Jev does the classifying.
+ */
+export async function classificationAuditSample(
+  options: { memory?: DemandThemeMemory & { latestDemandAudit(): Promise<StoredDemandAudit | null> }; now?: () => number } = {},
+): Promise<
+  | { due: false; reason: string }
+  | { due: true; sample: { permalink: string; quote: string }[]; instructions: string }
+> {
+  const now = (options.now ?? Date.now)();
+  const memory = options.memory ?? memoryFromEnv();
+  const latest = await memory.latestDemandAudit();
+  if (!auditDue(latest?.auditedAt, now)) {
+    const days = Math.floor((now - (latest?.auditedAt ?? now)) / 86_400_000);
+    return { due: false, reason: `the last audit ran ${days} day(s) ago; the next is due after 7` };
+  }
+  const { startDay, endDay } = askWindowDays(now);
+  const windowAsks = await memory.demandAsksInRange(startDay, endDay);
+  if (windowAsks.length === 0) return { due: false, reason: "no stored asks to audit" };
+  const sample = auditSample(windowAsks);
+  return {
+    due: true,
+    sample,
+    instructions:
+      "Every one of these was accepted by Jev as a buyer ask. Re-decide each independently: is the author looking for a product, tool, app or service? Return one verdict per permalink.",
+  };
+}
+
+export async function recordClassificationAudit(
+  verdicts: readonly { permalink: string; buyerAsk: boolean }[],
+  options: { memory?: DemandThemeMemory & { latestDemandAudit(): Promise<StoredDemandAudit | null>; recordDemandAudit(input: { day: string; auditedAt: number; sampled: number; agreed: number; agreementRate: number; disputed: string[] }): Promise<unknown> }; now?: () => number } = {},
+): Promise<{ status: string } & Partial<AuditResult>> {
+  const now = (options.now ?? Date.now)();
+  const memory = options.memory ?? memoryFromEnv();
+  const { startDay, endDay } = askWindowDays(now);
+  const windowAsks = await memory.demandAsksInRange(startDay, endDay);
+  // Score against the same deterministic sample the tool handed out, so a verdict for an ask
+  // outside it cannot inflate or deflate the rate.
+  const sample = auditSample(windowAsks);
+  const result = scoreAudit(sample, verdicts);
+  if (result.sampled === 0) return { status: "no-verdicts-matched-the-sample", ...result };
+  await memory.recordDemandAudit({
+    day: utcDay(now),
+    auditedAt: now,
+    sampled: result.sampled,
+    agreed: result.agreed,
+    agreementRate: result.agreementRate,
+    disputed: result.disputed,
+  });
+  return { status: "recorded", ...result };
 }

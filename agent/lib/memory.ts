@@ -161,6 +161,19 @@ export interface StoredDemandTheme {
   buildBreakdown?: string;
   verdict?: "worth-a-look" | "already-solved" | "unresearchable";
   verdictAt?: number;
+  labelQuality?: number;
+  labelQualityAt?: number;
+  labelQualityModel?: string;
+}
+
+export interface StoredDemandAudit {
+  _id: string;
+  day: string;
+  auditedAt: number;
+  sampled: number;
+  agreed: number;
+  agreementRate: number;
+  disputed: string[];
 }
 
 export interface StoredThemeResearch {
@@ -367,6 +380,27 @@ export class Memory {
     }>;
   }
 
+  recordThemeLabelQuality(input: {
+    themeKey: string;
+    labelQuality: number;
+    labelQualityAt: number;
+    labelQualityModel: string;
+  }): Promise<"recorded" | "missing"> {
+    return this.mutation("recordThemeLabelQuality", { ...input }) as Promise<"recorded" | "missing">;
+  }
+  recordDemandAudit(input: {
+    day: string;
+    auditedAt: number;
+    sampled: number;
+    agreed: number;
+    agreementRate: number;
+    disputed: string[];
+  }): Promise<unknown> {
+    return this.mutation("recordDemandAudit", { ...input });
+  }
+  latestDemandAudit(): Promise<StoredDemandAudit | null> {
+    return this.query("latestDemandAudit", {}) as Promise<StoredDemandAudit | null>;
+  }
   recordDemandThemeResearch(input: StoredThemeResearch): Promise<"recorded" | "missing"> {
     return this.mutation("recordDemandThemeResearch", input) as Promise<"recorded" | "missing">;
   }
