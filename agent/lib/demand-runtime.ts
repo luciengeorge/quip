@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { gatherSources, type CandidateSource } from "./candidates.ts";
 import { demandClassificationCap } from "./config.ts";
 import { classifyDemandWithJev } from "./demand-jev.ts";
+import { researchIncumbentsWithJev, searchIncumbents } from "./incumbent-jev.ts";
 import { renderDailyDemandReport, renderDemandSweepNotice } from "./demand-report.ts";
 import { jevFromEnv, type JevClient } from "./jev.ts";
 import {
@@ -624,6 +625,8 @@ export interface ThemeAssignmentResult {
   assignedCount: number;
   createdCount: number;
   messages: string[];
+  /** Themes Jev researched inline. These are already recorded and need nothing from the model. */
+  researched: { themeKey: string; verdict?: string; coverage: string; judged: number }[];
   themesNeedingResearch: {
     themeKey: string;
     label: string;
@@ -634,7 +637,13 @@ export interface ThemeAssignmentResult {
 
 export async function applyDemandThemeAssignments(
   raw: readonly unknown[],
-  options: { memory?: DemandThemeMemory; now?: () => number } = {},
+  options: {
+    memory?: DemandThemeMemory;
+    now?: () => number;
+    env?: Env;
+    /** Injected in tests. Null keeps research with the model subagent. */
+    jev?: JevClient | null;
+  } = {},
 ): Promise<ThemeAssignmentResult> {
   const now = (options.now ?? Date.now)();
   const memory = options.memory ?? memoryFromEnv();
@@ -675,11 +684,44 @@ export async function applyDemandThemeAssignments(
       .slice(0, 5),
   }));
 
+  // Incumbent research, inline. Every question here is a judgement over two short texts, which is
+  // what Jev is for, and the summary is assembled from the answers rather than written, so the
+  // truncated prose and unpriceable component lists the subagent produced cannot recur. When Jev
+  // or Exa is unconfigured the themes come back unresearched and the model does it as before.
+  const researched: { themeKey: string; verdict?: string; coverage: string; judged: number }[] = [];
+  const exaKey = (options.env ?? process.env).EXA_API_KEY?.trim();
+  const researchJev = options.jev ?? jevFromEnv(options.env);
+  if (researchJev && exaKey && needing.length > 0) {
+    for (const theme of needing) {
+      try {
+        const found = await searchIncumbents(theme.label, {
+          apiKey: exaKey,
+          leakGuard: leakGuardConfigFromEnv(options.env),
+        });
+        const research = await researchIncumbentsWithJev(researchJev, theme.label, found);
+        const recorded = await recordThemeResearch(
+          { themeKey: theme.themeKey, ...research },
+          { memory, now: () => now },
+        );
+        researched.push({
+          themeKey: theme.themeKey,
+          verdict: recorded.verdict,
+          coverage: research.incumbentCoverage,
+          judged: research.judged,
+        });
+      } catch (err) {
+        console.warn(`[jev] incumbent research failed for ${theme.themeKey}:`, err);
+      }
+    }
+  }
+  const researchedKeys = new Set(researched.map((r) => r.themeKey));
+
   return {
     assignedCount: validation.assignments.length,
     createdCount: applied.createdCount,
     messages: validation.messages,
-    themesNeedingResearch: needing,
+    researched,
+    themesNeedingResearch: needing.filter((theme) => !researchedKeys.has(theme.themeKey)),
   };
 }
 
