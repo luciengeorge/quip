@@ -27,6 +27,10 @@ function demandMemory() {
       async storeDemandCandidatePlan() {
         return `plan-${++planSequence}`;
       },
+      // Unused here: these tests inject no Jev, so inline classification never runs.
+      async upsertDemandAsks() {
+        return { insertedCount: 0, skippedCount: 0, dedupedCount: 0, insertedPermalinks: [] };
+      },
     },
     scans,
   };

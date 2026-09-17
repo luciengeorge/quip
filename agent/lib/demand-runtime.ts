@@ -2,7 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { gatherSources, type CandidateSource } from "./candidates.ts";
 import { demandClassificationCap } from "./config.ts";
+import { classifyDemandWithJev } from "./demand-jev.ts";
 import { renderDailyDemandReport, renderDemandSweepNotice } from "./demand-report.ts";
+import { jevFromEnv, type JevClient } from "./jev.ts";
 import {
   DEMAND_THEME_WINDOW_DAYS,
   distinctAskerCount,
@@ -74,6 +76,7 @@ export interface DemandThemeMemory {
 
 export interface DemandScanMemory {
   recordDemandScan(scan: DemandScanRecord): Promise<void>;
+  upsertDemandAsks(asks: DemandAsk[]): Promise<DemandAskUpsertResult>;
   storeDemandCandidatePlan(input: {
     plan: DemandCandidatePlan;
     seal: string;
@@ -104,6 +107,15 @@ export interface DemandSourceSetOptions {
 
 export interface PreparedDemandSweep {
   planId: string | null;
+  /**
+   * Set when Jev classified this sweep inline. The asks are already stored, so the handoff skips
+   * straight to theme naming and no sealed plan ever reaches a language model.
+   */
+  jevClassified?: {
+    asks: DemandAsk[];
+    newAsks: { permalink: string; quote: string; askedFor: string }[];
+    model: string;
+  };
   day: string;
   scannedAt: number;
   sourceStatus: DemandSourceStatus;
@@ -254,10 +266,12 @@ export function demandSourceSet(options: DemandSourceSetOptions = {}): DemandSou
 /** Gather, boundary-check, cap, and seal one demand batch before the fresh classifier sees it. */
 export async function prepareDemandSweep(options: {
   sourceSet: DemandSourceSet;
-  memory: Pick<DemandScanMemory, "recordDemandScan" | "storeDemandCandidatePlan">;
+  memory: Pick<DemandScanMemory, "recordDemandScan" | "storeDemandCandidatePlan" | "upsertDemandAsks">;
   secret: string;
   now?: () => number;
   env?: Env;
+  /** Injected in tests. Null disables inline classification and keeps the model handoff. */
+  jev?: JevClient | null;
 }): Promise<PreparedDemandSweep> {
   const scannedAt = (options.now ?? Date.now)();
   const day = utcDay(scannedAt);
@@ -312,6 +326,44 @@ export async function prepareDemandSweep(options: {
   } catch {
     messages.push("Demand scan record could not be written; no demand evidence was stored.");
   }
+  // Jev-native classification, inline. The model is not in this path at all: metadata comes from
+  // the stored candidate and the quote is the candidate's own text, so the echo-and-verify dance
+  // the sealed plan exists to police has nothing left to police. The sealed plan is still built
+  // below, because the language-model path remains the fallback when Jev is unconfigured.
+  let jevClassified: PreparedDemandSweep["jevClassified"];
+  const jev = options.jev ?? jevFromEnv(options.env);
+  if (jev && plan.candidates.length > 0) {
+    try {
+      const classification = await classifyDemandWithJev(
+        jev,
+        plan.candidates,
+        day,
+        scannedAt,
+        leakGuardConfigFromEnv(options.env),
+      );
+      const persistence = await options.memory.upsertDemandAsks(classification.asks);
+      const stored = new Set(persistence.insertedPermalinks);
+      jevClassified = {
+        asks: classification.asks,
+        newAsks: classification.asks
+          .filter((ask) => stored.has(ask.permalink))
+          .map((ask) => ({ permalink: ask.permalink, quote: ask.quote, askedFor: ask.askedFor })),
+        model: classification.model,
+      };
+      messages.push(
+        `Jev classified ${plan.candidates.length} candidates: ${classification.asks.length} buyer asks, ` +
+          `${classification.nonBuyerCount} not asking for a product, ${classification.vagueCount} too vague to name anything` +
+          (classification.leakyCount > 0 ? `, ${classification.leakyCount} blocked by the leak guard` : "") +
+          (classification.malformedOutputCount > 0 ? `, ${classification.malformedOutputCount} unanswered` : "") +
+          `. ${persistence.insertedCount} new, ${persistence.dedupedCount} already stored.`,
+      );
+    } catch (err) {
+      // Fall through to the language-model handoff rather than losing the day's scan.
+      console.warn("[jev] inline demand classification failed; using the model handoff:", err);
+      messages.push("Jev classification was unavailable; the language-model classifier ran instead.");
+    }
+  }
+
   const seal = sealDemandCandidatePlan(plan, options.secret);
   let planId: string | null = null;
   try {
@@ -325,6 +377,7 @@ export async function prepareDemandSweep(options: {
   }
   return {
     planId,
+    ...(jevClassified ? { jevClassified } : {}),
     day,
     scannedAt,
     sourceStatus,

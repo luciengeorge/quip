@@ -62,6 +62,17 @@ function memory() {
       async recordDemandScan(scan: unknown) {
         scans.push(scan);
       },
+      // Jev is not injected in these tests, so inline classification never runs and this is never
+      // called. It exists so the fake satisfies the same interface the runtime requires.
+      async upsertDemandAsks(asks: DemandAsk[]) {
+        stored.push(...asks);
+        return {
+          insertedCount: asks.length,
+          skippedCount: 0,
+          dedupedCount: 0,
+          insertedPermalinks: asks.map((ask) => ask.permalink),
+        };
+      },
       async storeDemandCandidatePlan(input: {
         plan: DemandCandidatePlan;
         seal: string;
