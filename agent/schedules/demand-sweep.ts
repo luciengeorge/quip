@@ -22,6 +22,27 @@ interface DemandSweepScheduleDependencies {
 const CLASSIFIER_OUTPUT_SCHEMA =
   '{ "type": "object", "additionalProperties": false, "required": ["classifications"], "properties": { "classifications": { "type": "array", "maxItems": 30, "items": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["buyerAsk", "permalink"], "properties": { "buyerAsk": { "const": false }, "permalink": { "type": "string" } } }, { "type": "object", "additionalProperties": false, "required": ["buyerAsk", "author", "askedAt", "quote", "replyCount", "permalink", "subreddit", "askedFor"], "properties": { "buyerAsk": { "const": true }, "author": { "type": "string" }, "askedAt": { "type": "integer" }, "quote": { "type": "string" }, "replyCount": { "type": "integer" }, "permalink": { "type": "string" }, "subreddit": { "type": "string" }, "askedFor": { "type": "string" } } } ] } } }';
 
+/**
+ * The handoff when Jev has already classified the sweep.
+ *
+ * Classification, persistence and the day's news all happened server-side before this message
+ * existed, so there is no sealed plan to guard and nothing for the model to echo back. The only
+ * genuinely generative step left is naming a theme, which Jev cannot do.
+ */
+export function demandSweepThemeOnlyMessage(prepared: PreparedDemandSweep): string {
+  const classified = prepared.jevClassified;
+  if (!classified) throw new Error("demandSweepThemeOnlyMessage called without a Jev classification");
+  return [
+    "The buyer-intent classification for today is already done and stored. Never draft a reply, contact an asker, post publicly, or pitch a product. The only text you may produce is the report this run returns to you.",
+    `Jev (${classified.model}) classified today's candidates and stored ${classified.newAsks.length} new asks.`,
+    "1. Call assign_demand_themes once. Group every ask it returns in `asksToGroup` into a recurring want. Prefer an existing `themeKey` from `openThemes` whenever the want matches; open a `newLabel` only when none fits. Naming a theme is the one step here a language model is needed for, so make the label name the WANT and nothing else, for example \"LLM token spend visibility\", never the post's own words and never \"someone asked about tokens\".",
+    "2. For each and only each entry in the returned `themesNeedingResearch`, delegate exactly once to the demand_viability subagent. Give it the theme label and its quotes. Set outputSchema to an object with all of: incumbentCoverage (one of \"covers\", \"partial\", \"none\"), incumbents (array of {name, covers}, at most 5, each `covers` one short clause), researchSummary (a string of at most two sentences), sources (array of {url, claim}), buildComponents (array of strings drawn ONLY from: auth, payments, third-party API integration, scraping or crawling, data pipeline or ETL, LLM feature, realtime, browser extension, mobile app, two-sided marketplace, manual ops bootstrap, regulated or compliance work). Do not research a theme outside that list and do not retry.",
+    "3. Call record_theme_research once per researched theme with that themeKey and the subagent's output verbatim. The verdict is computed there, not by you.",
+    "4. Call build_demand_report once, with no arguments.",
+    "5. Post its returned `report` field exactly as given, and nothing else. Do not summarise it, reorder it, add to it, or comment on it.",
+  ].join("\n");
+}
+
 export function demandSweepHandoffMessage(prepared: PreparedDemandSweep): string {
   if (!prepared.planId) throw new Error("Demand candidate plan was not stored");
   return [
@@ -77,10 +98,13 @@ export async function runDemandSweepSchedule(
           logger.warn("[demand-sweep] Slack handoff skipped: SLACK_CHANNEL_ID is not set.");
           return false;
         }
+        // Jev classified inline: the asks are stored and only theme naming is left. Otherwise the
+        // sealed plan still needs a language model to classify, which is the fallback path.
+        const jevDone = prepared.jevClassified !== undefined;
         const nothingToClassify =
           prepared.sourceStatus !== "available" ||
           prepared.plan.candidates.length === 0 ||
-          !prepared.planId;
+          (!jevDone && !prepared.planId);
         if (nothingToClassify) {
           logger.log(
             `[demand-sweep] classifier handoff skipped; status=${prepared.sourceStatus}; candidates=${prepared.plan.candidates.length}; stored=${Boolean(prepared.planId)}`,
@@ -95,7 +119,9 @@ export async function runDemandSweepSchedule(
                   ? "the sources returned no candidates"
                   : "the candidate plan could not be stored",
             )
-          : demandSweepHandoffMessage(prepared);
+          : jevDone
+            ? demandSweepThemeOnlyMessage(prepared)
+            : demandSweepHandoffMessage(prepared);
         waitUntil(
           to(slack, { channelId })
             .send(message, { auth: appAuth })
