@@ -930,3 +930,55 @@ export const recordDemandThemeResearch = mutation({
     return "recorded" as const;
   },
 });
+
+// --- quip evals ---
+
+/** Store Jev's score for one theme label. The label is written by a model, so this is not self-marking. */
+export const recordThemeLabelQuality = mutation({
+  args: {
+    token: v.string(),
+    themeKey: v.string(),
+    labelQuality: v.number(),
+    labelQualityAt: v.number(),
+    labelQualityModel: v.string(),
+  },
+  returns: v.union(v.literal("recorded"), v.literal("missing")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    const { token, themeKey, ...fields } = args;
+    const existing = await ctx.db
+      .query("demandThemes")
+      .withIndex("by_themeKey", (q) => q.eq("themeKey", themeKey))
+      .unique();
+    if (!existing) return "missing" as const;
+    await ctx.db.patch(existing._id, fields);
+    return "recorded" as const;
+  },
+});
+
+export const recordDemandAudit = mutation({
+  args: {
+    token: v.string(),
+    day: v.string(),
+    auditedAt: v.number(),
+    sampled: v.number(),
+    agreed: v.number(),
+    agreementRate: v.number(),
+    disputed: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    const { token, ...rest } = args;
+    return await ctx.db.insert("demandAudits", rest);
+  },
+});
+
+export const latestDemandAudit = query({
+  args: { token: v.string() },
+  returns: v.union(v.null(), schema.doc("demandAudits")),
+  handler: async (ctx, args) => {
+    assertSecret(args.token);
+    const rows = await ctx.db.query("demandAudits").withIndex("by_auditedAt").order("desc").take(1);
+    return rows[0] ?? null;
+  },
+});

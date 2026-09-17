@@ -178,9 +178,29 @@ export default defineSchema({
       v.union(v.literal("worth-a-look"), v.literal("already-solved"), v.literal("unresearchable")),
     ),
     verdictAt: v.optional(v.number()),
+    // How well the label names a want, scored by Jev against a fixed rubric. The label is written
+    // by a language model, so Jev grading it is a real second opinion rather than self-marking.
+    labelQuality: v.optional(v.number()),
+    labelQualityAt: v.optional(v.number()),
+    labelQualityModel: v.optional(v.string()),
   })
     .index("by_themeKey", ["themeKey"])
     .index("by_lastSeenAt", ["lastSeenAt"]),
+
+  /**
+   * Independent audits of what Jev classified.
+   *
+   * Jev must never grade its own classification, so the language-model classifier re-decides a
+   * sample and the agreement rate is recorded here. One row per audit.
+   */
+  demandAudits: defineTable({
+    day: v.string(),
+    auditedAt: v.number(),
+    sampled: v.number(),
+    agreed: v.number(),
+    agreementRate: v.number(),
+    disputed: v.array(v.string()),
+  }).index("by_auditedAt", ["auditedAt"]),
 
   demandAsks: defineTable({
     topicHash: v.string(),

@@ -37,7 +37,14 @@ export interface ChoiceQuestion {
   criteria: Record<string, string | null>;
 }
 
-export type JevQuestion = NoulQuestion | ChoiceQuestion;
+/** An ordered rubric. `criteria` is the level descriptions, lowest first, at least two. */
+export interface ScoreQuestion {
+  type: "score";
+  instructions: string;
+  criteria: string[];
+}
+
+export type JevQuestion = NoulQuestion | ChoiceQuestion | ScoreQuestion;
 
 export interface NoulAnswer {
   type: "noul";
@@ -51,11 +58,26 @@ export interface ChoiceAnswer {
   confidence: number;
 }
 
-export type JevAnswer = NoulAnswer | ChoiceAnswer;
+export interface ScoreAnswer {
+  type: "score";
+  /** Probability-weighted across the levels, so it can land between them. */
+  score: number;
+  legend: Record<string, string>;
+  probabilities: Record<string, number>;
+  confidence: number;
+}
+
+export type JevAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
 
 export interface JevResponse<Q extends Record<string, JevQuestion>> {
   model: string;
-  answers: { [K in keyof Q]: Q[K] extends NoulQuestion ? NoulAnswer : ChoiceAnswer };
+  answers: {
+    [K in keyof Q]: Q[K] extends NoulQuestion
+      ? NoulAnswer
+      : Q[K] extends ScoreQuestion
+        ? ScoreAnswer
+        : ChoiceAnswer;
+  };
   usage: { input_tokens: number; output_tokens: number };
 }
 
@@ -89,6 +111,29 @@ function validateAnswer(id: string, question: JevQuestion, raw: unknown): JevAns
   if (question.type === "noul") {
     if (a.type !== "noul" || !isFiniteUnit(a.noul)) throw new JevError(`answer ${id}: malformed noul`);
     return { type: "noul", noul: a.noul };
+  }
+  if (question.type === "score") {
+    if (a.type !== "score" || typeof a.score !== "number" || !Number.isFinite(a.score) || !isFiniteUnit(a.confidence)) {
+      throw new JevError(`answer ${id}: malformed score`);
+    }
+    // The score must land inside the rubric it was given. A value outside it is not a level.
+    if (a.score < 0 || a.score > question.criteria.length - 1) {
+      throw new JevError(`answer ${id}: score ${a.score} outside the rubric`);
+    }
+    const probs: Record<string, number> = {};
+    const raw = (a.probabilities ?? {}) as Record<string, unknown>;
+    for (let level = 0; level < question.criteria.length; level += 1) {
+      const p = raw[String(level)];
+      if (!isFiniteUnit(p)) throw new JevError(`answer ${id}: probability missing for level ${level}`);
+      probs[String(level)] = p;
+    }
+    return {
+      type: "score",
+      score: a.score,
+      legend: (a.legend ?? {}) as Record<string, string>,
+      probabilities: probs,
+      confidence: a.confidence,
+    };
   }
   if (a.type !== "choice" || typeof a.choice !== "string" || !isFiniteUnit(a.confidence)) {
     throw new JevError(`answer ${id}: malformed choice`);

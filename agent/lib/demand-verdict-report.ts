@@ -6,6 +6,7 @@ import {
   type DemandThemeRecord,
 } from "./demand-themes.ts";
 import { containsLeak } from "./leak-guard.ts";
+import type { LabelQualitySummary } from "./quip-eval.ts";
 
 /**
  * The daily message, led by conclusions.
@@ -35,6 +36,44 @@ const VERDICT_LABEL = {
   unresearchable: "UNRESEARCHABLE",
 } as const;
 
+/**
+ * How much to trust the report above.
+ *
+ * Two different things, kept apart on purpose. Label quality is Jev grading labels a language
+ * model wrote, which is a fair second opinion. The audit is the LANGUAGE MODEL re-deciding a
+ * sample of what Jev classified, because Jev grading its own classification would always look
+ * excellent and would mean nothing.
+ */
+export interface AuditSummary {
+  agreed: number;
+  sampled: number;
+  agreementRate: number;
+  auditedAt: number;
+}
+
+function evalSection(
+  labelQuality: LabelQualitySummary | null | undefined,
+  audit: AuditSummary | null | undefined,
+): string[] {
+  const lines: string[] = [];
+  if (labelQuality) {
+    lines.push(
+      `Theme labels (scored by Jev, written by the model): ${labelQuality.good}/${labelQuality.scored} usable, mean ${labelQuality.meanScore}/3.` +
+        (labelQuality.poorLabels.length > 0
+          ? ` Too vague to group by: ${labelQuality.poorLabels.join("; ")}.`
+          : ""),
+    );
+  }
+  if (audit) {
+    const days = Math.floor((Date.now() - audit.auditedAt) / 86_400_000);
+    lines.push(
+      `Classification audit (the model re-deciding Jev's calls, ${days === 0 ? "today" : `${days}d ago`}): ` +
+        `${audit.agreed}/${audit.sampled} agreed, ${Math.round(audit.agreementRate * 100)}%.`,
+    );
+  }
+  return lines.length > 0 ? ["## Eval", ...lines] : lines;
+}
+
 export interface DemandVerdictReportInput {
   day: string;
   themes: readonly DemandThemeRecord[];
@@ -43,6 +82,10 @@ export interface DemandVerdictReportInput {
   /** Asks stored across the whole theme window, which is the pool the verdicts are drawn from. */
   windowAskCount: number;
   generatedAt: number;
+  /** Jev's read on labels the model wrote. Absent until some theme has been scored. */
+  labelQuality?: LabelQualitySummary | null;
+  /** The model's independent re-check of Jev's classification. Absent until one has run. */
+  audit?: AuditSummary | null;
   notes?: readonly string[];
 }
 
@@ -137,6 +180,11 @@ export function renderDemandVerdictReport(input: DemandVerdictReportInput): stri
   } else {
     lines.push(...safeAsks.slice(0, 8).map((ask) => demandAskLine(ask, input.generatedAt)));
   }
+
+  // Eval last, and short. It is about whether to trust the sections above, which is worth a line
+  // and not worth a section.
+  const evalLines = evalSection(input.labelQuality, input.audit);
+  if (evalLines.length > 0) lines.push("", ...evalLines);
 
   const notes = input.notes ?? [];
   if (notes.length > 0) lines.push("", ...notes.map((note) => `- ${note}`));
