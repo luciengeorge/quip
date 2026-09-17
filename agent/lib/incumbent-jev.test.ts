@@ -10,6 +10,7 @@ import {
   INCUMBENT_MAX_REPORTED,
   INCUMBENT_MIN_RELEVANCE,
   judgeIncumbent,
+  namesAProduct,
   researchIncumbentsWithJev,
   summaryFrom,
   type IncumbentCandidate,
@@ -156,4 +157,60 @@ test("the theme pass researches inline and removes those themes from the model's
   // The subagent path stays for when Jev or Exa is unconfigured.
   const schedule = readFileSync(new URL("../schedules/demand-sweep.ts", import.meta.url), "utf8");
   assert.match(schedule, /demand_viability/);
+});
+
+test("a page title that names no product is not printed as an incumbent", () => {
+  // A live run produced "Welcome to: serves this want as described".
+  assert.equal(namesAProduct("Welcome to"), false);
+  assert.equal(namesAProduct("Home"), false);
+  assert.equal(namesAProduct("Untitled"), false);
+  assert.equal(namesAProduct("404"), false);
+  // Not a length rule: short real product names survive.
+  assert.equal(namesAProduct("X"), true);
+  assert.equal(namesAProduct("Vi"), true);
+  assert.equal(namesAProduct("  "), false);
+  assert.equal(namesAProduct("---"), false);
+  assert.equal(namesAProduct("Synic – Offline Music Player"), true);
+  assert.equal(namesAProduct("Helicone"), true);
+});
+
+test("an unnameable result still counts toward coverage, it just is not named", async () => {
+  // Coverage rests on the probabilities, not the titles. Dropping the row entirely would change
+  // the verdict because of a page's title tag, which is the wrong thing to be sensitive to.
+  const { client } = fakeJev({ "Welcome to": { serves: 0.9, relevant: 0.9 } }, []);
+  const out = await researchIncumbentsWithJev(client, "ad-free music apps", [product("Welcome to")], quiet);
+  assert.equal(out.incumbentCoverage, "covers");
+  assert.equal(out.judged, 1);
+  assert.deepEqual(out.incumbents, []);
+  assert.deepEqual(out.sources, []);
+  assert.match(out.researchSummary, /did not name it clearly/);
+});
+
+test("the summary names the best product that can actually be named", async () => {
+  const { client } = fakeJev(
+    { "Welcome to": { serves: 0.95, relevant: 0.9 }, Synic: { serves: 0.8, relevant: 0.9 } },
+    [],
+  );
+  const out = await researchIncumbentsWithJev(client, "want", [product("Welcome to"), product("Synic")], quiet);
+  assert.match(out.researchSummary, /^Synic already serves/);
+  assert.equal(out.incumbents.length, 1);
+});
+
+test("a partial summary stays true when nothing can be named", () => {
+  const s = summaryFrom("want", "partial", [verdict({ name: "Home" }), verdict({ name: "Welcome to" })]);
+  assert.match(s, /^2 products address this space but none serves the want on its own\.$/);
+});
+
+test("the summary counts every relevant product, including ones it cannot name", async () => {
+  // Naming is cosmetic; the count is evidence. Filtering unnameable results out of the evidence
+  // would understate how crowded a space is because of a page's title tag.
+  const { client } = fakeJev(
+    { "Welcome to": { serves: 0.3, relevant: 0.9 }, Synic: { serves: 0.4, relevant: 0.9 } },
+    [],
+  );
+  const out = await researchIncumbentsWithJev(client, "want", [product("Welcome to"), product("Synic")], quiet);
+  assert.equal(out.incumbentCoverage, "partial");
+  assert.match(out.researchSummary, /^2 products address this space/);
+  assert.match(out.researchSummary, /the closest is Synic\.$/);
+  assert.equal(out.incumbents.length, 1);
 });

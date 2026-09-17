@@ -63,6 +63,29 @@ export const BUILD_COMPONENT_QUESTIONS: Record<BuildComponentName, string> = {
   "regulated or compliance work": "Would a first version touch regulated data such as health, finance, or identity?",
 };
 
+/**
+ * A search result whose title does not name a product.
+ *
+ * Exa returns whatever the page's title tag says, and plenty of pages say "Welcome to" or "Home".
+ * A live run produced the incumbent line "Welcome to: serves this want as described", which tells
+ * the reader nothing and makes a real finding look careless. The coverage verdict is unaffected
+ * because it rests on the probabilities, not the titles, so these are dropped from what is NAMED
+ * rather than from what is judged.
+ */
+const UNINFORMATIVE_NAME =
+  /^(welcome(\s+to)?|home( ?page)?|index|untitled|page not found|404|loading|sign ?in|log ?in)\b/iu;
+
+/**
+ * Deliberately NOT a length rule. "X" and "Vi" are real product names, so a minimum length would
+ * discard real incumbents to catch a handful of placeholder titles. What actually distinguishes a
+ * placeholder is that it is a known page-furniture phrase, or has no letters or digits at all.
+ */
+export function namesAProduct(name: string): boolean {
+  const trimmed = name.trim();
+  if (UNINFORMATIVE_NAME.test(trimmed)) return false;
+  return /[\p{L}\p{N}]/u.test(trimmed);
+}
+
 export interface IncumbentVerdict {
   name: string;
   url: string;
@@ -133,11 +156,18 @@ export function summaryFrom(
   if (coverage === "none") {
     return `Nothing found that addresses ${want}.`;
   }
-  const best = [...relevant].sort((a, b) => b.serves - a.serves)[0];
+  // Name the best product that can actually be named. Falling back to a count keeps the sentence
+  // true when every relevant result had an uninformative title.
+  const named = [...relevant].filter((v) => namesAProduct(v.name)).sort((a, b) => b.serves - a.serves);
+  const best = named[0];
   if (coverage === "covers") {
-    return `${best?.name} already serves this want as described, so building it again needs a reason this does not cover.`;
+    return best
+      ? `${best.name} already serves this want as described, so building it again needs a reason this does not cover.`
+      : "An existing product already serves this want, though the search result did not name it clearly.";
   }
-  return `${relevant.length} ${relevant.length === 1 ? "product addresses" : "products address"} this space but none serves the want on its own; the closest is ${best?.name}.`;
+  const count = relevant.length;
+  const closest = best ? `; the closest is ${best.name}` : "";
+  return `${count} ${count === 1 ? "product addresses" : "products address"} this space but none serves the want on its own${closest}.`;
 }
 
 export interface JevIncumbentResearch extends ThemeResearchOutput {
@@ -192,14 +222,17 @@ export async function researchIncumbentsWithJev(
     logger.warn("[jev] build components unavailable:", err);
   }
 
+  // Named separately from judged: a page titled "Welcome to" still counts toward coverage, it
+  // just cannot be printed as the name of an incumbent.
+  const nameable = relevant.filter((v) => namesAProduct(v.name));
   return {
     incumbentCoverage: coverage,
-    incumbents: relevant.slice(0, INCUMBENT_MAX_REPORTED).map((v) => ({
+    incumbents: nameable.slice(0, INCUMBENT_MAX_REPORTED).map((v) => ({
       name: v.name,
       covers: v.serves >= INCUMBENT_COVERS_AT ? "serves this want as described" : "addresses the space but not the want itself",
     })),
     researchSummary: summaryFrom(want, coverage, relevant),
-    sources: relevant.slice(0, INCUMBENT_MAX_REPORTED).map((v) => ({
+    sources: nameable.slice(0, INCUMBENT_MAX_REPORTED).map((v) => ({
       url: v.url,
       claim: `${v.name}: serves ${v.serves.toFixed(2)}, relevant ${v.relevant.toFixed(2)}`,
     })),
